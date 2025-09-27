@@ -238,6 +238,23 @@ These payloads can be imported directly into the frontend store for demos or reg
 | Segment mesh does not move with spread slider | Update to this revision; overlays now reuse the same scaled geometry pipeline as the point cloud. |
 | Frontend tests complain about missing pnpm | Install Node 20, run corepack enable, then pnpm install. |
 
+## How Is This Mapped?
+
+The picture on screen is the end of a repeatable pipeline that turns raw completions into blended feature vectors, projects them with UMAP, and then rehydrates the geometry in the browser. Here is the full loop:
+
+1. **Generate the text you want to map.** One prompt is fanned out to `n` chat completions (pick any supported GPT family). Each completion is optionally segmented into discourse-aware chunks (sentences/clauses) so you can explore both whole responses and their fragments. Every run and artifact is written to SQLite for reproducibility.
+2. **Blend multiple feature views into a single vector.** For every response/segment we concatenate: (a) an OpenAI embedding (`text-embedding-3-large`, with a small-model fallback), (b) TF‑IDF weights over the corpus, (c) prompt-similarity features (e.g., cosine distance to the original prompt or seed answer), and (d) lightweight scalar stats such as length. This gives us one high-dimensional feature vector per item.
+3. **Project twice with deterministic UMAP.** Using a fixed random seed, we run UMAP two times over the same blended matrix—one projection targets 3D coordinates for the point cloud, the other targets 2D for exports and minimaps. UMAP preserves neighborhood relationships; the three axes are latent directions, not hand-labeled topics.
+4. **Persist coordinates and metadata.** Each item stores `coords_3d = [x, y, z]` and `coords_2d = [x, y]`, plus embedding hashes, cluster labels, and outlier scores. Because the seed is shared, repeated runs over identical data remain stable.
+5. **Cluster for structure.** HDBSCAN labels dense regions, emits soft membership probabilities, and computes outlier scores; if it cannot converge, a KMeans fallback guarantees a partition. Cluster centroids and keyword themes feed the legend and detail drawers.
+6. **Build overlays from the same scale.** From the blended vectors we derive similarity edges (k-NN graph), parent-thread meshes (linking segments back to responses), and convex hulls per response. These overlays now reuse the same center/scale calculations as the point positions so they stay aligned when you tweak the spread slider or camera.
+7. **Render with react-three-fiber.** The frontend components pull JSON from `/run/{id}/results`, memoise typed arrays for coordinates/colors, and hand them to `Points` in WebGL. Orthographic/ perspective cameras, lasso selection, density heatmaps, and tooltips all run on top of that base geometry. The 2D projection powers exports and alt views.
+8. **Interact, label, export.** Filters (role, cluster, outlier), annotations, and history management all mutate the Zustand store. Exports include text, blended features, clusters, and both coordinate sets so downstream workflows can replay the map.
+
+> **Why don’t the axes say “topic” or “sentiment”?** Because UMAP is a manifold learner: it pulls high-dimensional neighborhoods into three latent directions that best preserve proximity. Semantic meaning lives in closeness, clusters, hulls, and edges—not in the individual axis labels.
+
+If you want to tune the layout, play with the UMAP parameters in the backend configuration (`n_neighbors`, `min_dist`, `metric`) and keep them aligned with any k-NN edge building so the overlays remain faithful.
+
 ## Roadmap and Next Steps
 
 - Integrate pnpm into the CLI image so Vitest can run locally and in CI without manual setup.
