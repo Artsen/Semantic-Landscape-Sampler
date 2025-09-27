@@ -3,22 +3,30 @@
 Semantic Landscape Sampler fans a single question out across many LLM completions, stores every artifact, and turns the results into an explorable semantic landscape. The backend handles sampling, embeddings, dimensionality reduction, clustering, and persistence; the frontend delivers an interactive 2D/3D point cloud with overlays for segments, similarity edges, and response hulls.
 
 ## Table of Contents
-- [Overview](#overview)
-- [Key Capabilities](#key-capabilities)
-- [Architecture](#architecture)
-- [Prerequisites](#prerequisites)
-- [Environment Configuration](#environment-configuration)
-- [Backend Setup](#backend-setup)
-- [Frontend Setup](#frontend-setup)
-- [Running the Stack](#running-the-stack)
-- [Using the Visualiser](#using-the-visualiser)
-- [Data Model and Persistence](#data-model-and-persistence)
-- [API Endpoints](#api-endpoints)
-- [Testing and Quality Gates](#testing-and-quality-gates)
-- [Seed Sample Data](#seed-sample-data)
-- [Troubleshooting](#troubleshooting)
-- [Roadmap and Next Steps](#roadmap-and-next-steps)
-- [Contributing](#contributing)
+- [Semantic Landscape Sampler](#semantic-landscape-sampler)
+  - [Table of Contents](#table-of-contents)
+  - [Overview](#overview)
+  - [Key Capabilities](#key-capabilities)
+    - [Backend](#backend)
+    - [Frontend](#frontend)
+  - [Architecture](#architecture)
+  - [Prerequisites](#prerequisites)
+  - [Environment Configuration](#environment-configuration)
+  - [Backend Setup](#backend-setup)
+  - [Frontend Setup](#frontend-setup)
+  - [Running the Stack](#running-the-stack)
+  - [Using the Visualiser](#using-the-visualiser)
+    - [Controls Reference](#controls-reference)
+    - [Exploration Tips](#exploration-tips)
+  - [Data Model and Persistence](#data-model-and-persistence)
+  - [API Endpoints](#api-endpoints)
+  - [Testing and Quality Gates](#testing-and-quality-gates)
+    - [Backend](#backend-1)
+    - [Frontend](#frontend-1)
+  - [Seed Sample Data](#seed-sample-data)
+  - [Troubleshooting](#troubleshooting)
+  - [Roadmap and Next Steps](#roadmap-and-next-steps)
+  - [Contributing](#contributing)
 
 ## Overview
 
@@ -39,14 +47,15 @@ Recent UX improvement: the segment overlays (thread mesh, similarity edges, and 
 
 ### Frontend
 - React + Vite + Tailwind + Zustand application scaffolded for fast iteration.
-- eact-three-fiber + drei rendering of the point cloud, complete with hover tooltips, lasso selection, camera controls, Stats overlay, and density heatmaps.
+- 
+eact-three-fiber + drei rendering of the point cloud, complete with hover tooltips, lasso selection, camera controls, Stats overlay, and density heatmaps.
 - Response vs segment modes, cluster legends, role filters, similarity edges, parent thread meshes, and convex hull overlays.
 - Detail drawer for metrics, raw text, embeddings, and parent response context.
 - Run history drawer, run notes editor, quick outlier selectors, and exports that mirror backend payloads (JSON and CSV).
 
 ## Architecture
 
-`
+```
 backend/
   app/
     api/            # FastAPI routers (runs, sampling, exports)
@@ -66,7 +75,7 @@ frontend/
   public/           # Static assets (if any)
 .github/
   workflows/ci.yml  # Format, lint, and test gates for both stacks
-`
+```
 
 ## Prerequisites
 
@@ -78,39 +87,38 @@ frontend/
 ## Environment Configuration
 
 1. Copy the sample environment file and fill in secrets:
-   `ash
+   ```bash
    cp .env.example .env
-   `
+   ```
 2. Set at minimum OPENAI_API_KEY. You can also tune sampling defaults (DEFAULT_MODEL, DEFAULT_TEMPERATURE, etc.) and SQLite paths.
 3. Backend and frontend both read from .env at the project root; keep secrets out of version control.
 
 ## Backend Setup
 
-`ash
+```bash
 cd backend
 python -m venv .venv  # or: uv venv
 source .venv/bin/activate
 pip install -r requirements.txt
-`
+```
 
 Launching the API during development:
 
-`ash
+```bash
 source .venv/bin/activate
 uvicorn app.main:app --reload --port 8000
-`
+```
 
-The backend automatically initialises the SQLite schema on first run. If you upgrade from an older database image and encounter missing columns (for example, 
-otes), delete ackend/data/semantic_sampler.db or run the migration snippet in AGENTS.md.
+The backend automatically initialises the SQLite schema on first run. If you upgrade from an older database image and encounter missing columns (for example, notes), delete backend/data/semantic_sampler.db or run the migration snippet in AGENTS.md.
 
 ## Frontend Setup
 
-`ash
+```bash
 cd frontend
 corepack enable
 pnpm install
 pnpm dev -- --open
-`
+```
 
 By default Vite serves on http://localhost:5173 and proxies API calls to http://localhost:8000.
 
@@ -149,14 +157,14 @@ SQLite schema (simplified):
 
 | Table | Purpose |
 | --- | --- |
-| uns | Prompt, model, sampling configuration, status, notes. |
-| esponses | Raw chat completions and metadata (cluster label, centroid similarity, outlier score). |
-| esponse_segments | Sentence/discourse segments tied to parent responses. |
+| runs | Prompt, model, sampling configuration, status, notes. |
+| responses | Raw chat completions and metadata (cluster label, centroid similarity, outlier score). |
+| response_segments | Sentence/discourse segments tied to parent responses. |
 | embeddings | Embedding vectors (responses and segments) for reproducibility. |
 | projections | UMAP/t-SNE coordinates in 2D and 3D. |
 | clusters | Cluster assignments and stats for responses and segments. |
 | segment_edges | High-similarity edges between segments. |
-| esponse_hulls | Convex hull coordinates for each response (2D and 3D). |
+| response_hulls | Convex hull coordinates for each response (2D and 3D). |
 
 Results are returned as a single JSON payload so the frontend can hydrate the scene offline if needed.
 
@@ -171,29 +179,29 @@ Results are returned as a single JSON payload so the frontend can hydrate the sc
 | GET | /run/{id}/export.csv | Flattened CSV for response-level analytics. |
 | PATCH | /run/{id} | Update metadata such as run notes. |
 
-All endpoints return JSON and expect/produce Pydantic schemas located in ackend/app/schemas/run.py.
+All endpoints return JSON and expect/produce Pydantic schemas located in backend/app/schemas/run.py.
 
 ## Testing and Quality Gates
 
 ### Backend
-`ash
+```bash
 cd backend
 source .venv/bin/activate
 pytest
 ruff check app tests
 black app tests --check
-`
+```
 
-ackend/tests ships fixtures that mock OpenAI calls so the suite runs offline. Golden files cover projection determinism (fixed random state).
+backend/tests ships fixtures that mock OpenAI calls so the suite runs offline. Golden files cover projection determinism (fixed random state).
 
 ### Frontend
-`ash
+```bash
 cd frontend
 pnpm lint
 pnpm test -- --run
-`
+```
 
-Vitest is configured for DOM testing (rontend/src/setupTests.ts). When pnpm is unavailable in your shell, install Node 20 and enable Corepack first.
+Vitest is configured for DOM testing (frontend/src/setupTests.ts). When pnpm is unavailable in your shell, install Node 20 and enable Corepack first.
 
 GitHub Actions (.github/workflows/ci.yml) runs formatters, linters, and unit tests for both stacks.
 
@@ -201,18 +209,18 @@ GitHub Actions (.github/workflows/ci.yml) runs formatters, linters, and unit tes
 
 With both services running:
 
-`ash
+```bash
 curl -X POST http://localhost:8000/run \
   -H "Content-Type: application/json" \
   -d '{"prompt":"How will climate change reshape coastal cities?","n":25,"model":"gpt-4.1-mini","temperature":0.9,"top_p":1.0,"seed":123,"max_tokens":800}'
-`
+```
 
-Note the un_id from the response, then:
+Note the run_id from the response, then:
 
-`ash
+```bash
 curl -X POST http://localhost:8000/run/<run_id>/sample
 curl http://localhost:8000/run/<run_id>/results | jq
-`
+```
 
 These payloads can be imported directly into the frontend store for demos or regression testing.
 
@@ -220,8 +228,8 @@ These payloads can be imported directly into the frontend store for demos or reg
 
 | Problem | Fix |
 | --- | --- |
-| AttributeError: coverage.types.Tracer when running UMAP | Stick to coverage==7.5.3; the shim in pp/services/projection.py patches numba coverage hooks. |
-| 	able runs has no column named notes | Run the migration snippet in AGENTS.md or delete the SQLite file to recreate it. |
+| AttributeError: coverage.types.Tracer when running UMAP | Stick to coverage==7.5.3; the shim in app/services/projection.py patches numba coverage hooks. |
+| table runs has no column named notes | Run the migration snippet in AGENTS.md or delete the SQLite file to recreate it. |
 | Empty scene after sampling | Ensure the backend logs show completed sampling; the frontend now refreshes draw ranges immediately after buffer updates. |
 | Segment mesh does not move with spread slider | Update to this revision; overlays now reuse the same scaled geometry pipeline as the point cloud. |
 | Frontend tests complain about missing pnpm | Install Node 20, run corepack enable, then pnpm install. |
