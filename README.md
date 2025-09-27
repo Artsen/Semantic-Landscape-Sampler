@@ -1,5 +1,8 @@
 # Semantic Landscape Sampler
 
+
+[![Video Overview](./semantic-landscape-sampler.png)](./2025-09-27_17-46-43.mp4)
+
 Semantic Landscape Sampler fans a single question out across many LLM completions, stores every artifact, and turns the results into an explorable semantic landscape. The backend handles sampling, embeddings, dimensionality reduction, clustering, and persistence; the frontend delivers an interactive 2D/3D point cloud with overlays for segments, similarity edges, and response hulls.
 
 ## Table of Contents
@@ -27,6 +30,7 @@ Semantic Landscape Sampler fans a single question out across many LLM completion
   - [Troubleshooting](#troubleshooting)
   - [Roadmap and Next Steps](#roadmap-and-next-steps)
   - [Contributing](#contributing)
+  - [Rendering Pipeline (Mermaid)](#rendering-pipeline-mermaid)
 
 ## Overview
 
@@ -246,3 +250,95 @@ These payloads can be imported directly into the frontend store for demos or reg
 Issues and pull requests are welcome. Please run the backend and frontend test suites (or note why they could not be executed) before submitting changes. Review the mission details in AGENTS.md for broader context and follow the style guides enforced by Ruff, Black, ESLint, and Prettier.
 
 Happy sampling!
+
+## Rendering Pipeline (Mermaid)
+
+```mermaid
+flowchart TD
+    %% User interaction
+    U["User adjusts parameters\n& clicks Generate"] --> CP["ControlsPanel
+(UI events)"]
+    CP --> RS["Zustand runStore
+(state mutations)"]
+    RS -->|"POST /run"| API_Run["FastAPI /run endpoint"]
+
+    subgraph Backend Sampling
+        API_Run --> RunsSvc["RunsService.create_run"]
+        RunsSvc -->|"SQLModel insert"| DB[("SQLite
+runs table")]
+
+        RS -->|"POST /run/{id}/sample"| API_Sample["FastAPI /run/{id}/sample"]
+        API_Sample --> Generator["RunsService.sample_run"]
+        Generator -->|"Chat prompts"| OpenAIChat["OpenAI Chat Completions"]
+        Generator --> Splitter["Sentence & discourse
+segmentation"]
+        Splitter --> EmbBlend["Embedding blend
+(OpenAI + TF-IDF + stats)"]
+        EmbBlend -->|"text-embedding-3-large"| OpenAIEmbed["OpenAI Embeddings"]
+        EmbBlend --> TFIDF["TF-IDF
+feature matrix"]
+        EmbBlend --> Stats["Prompt similarity &
+response stats"]
+        EmbBlend --> EmbVectors["Merged embedding vectors"]
+
+        EmbVectors --> Projections["UMAP 3D & 2D
+(random_state seeded)"]
+        Projections --> Clustering["HDBSCAN
+probabilities + outliers"]
+        Clustering -->|"fallback"| KMeansFallback["KMeans (if HDBSCAN fails)"]
+
+        Splitter --> Threads["Parent thread builder"]
+        EmbVectors --> Similarity["Segment similarity graph"]
+        Splitter --> Hulls["Convex hull generator
+(2D + 3D)"]
+
+        Generator -->|"SQLModel bulk upsert"| DB
+        Projections -->|"persist projections"| DB
+        Clustering -->|"persist clusters"| DB
+        Similarity -->|"persist edges"| DB
+        Hulls -->|"persist hulls"| DB
+    end
+
+    %% Fetching results
+    RS -->|"GET /run/{id}/results"| API_Results["FastAPI /run/{id}/results"]
+    API_Results --> RunsSvcResults["RunsService.get_results"]
+    RunsSvcResults --> DB
+    RunsSvcResults --> Payload["Aggregated JSON payload"]
+    Payload --> RS
+    RS --> WorkflowHook["useRunWorkflow hook"]
+
+    %% Frontend hydration
+    WorkflowHook --> Components["React components"]
+    Components --> R3F["react-three-fiber scene"]
+    Components --> Legend["ClusterLegend"]
+    Components --> ControlsPanel
+    Components --> DetailsPanel["PointDetailsPanel"]
+    Components --> Notes["RunNotesEditor"]
+
+    %% Scene rendering
+    subgraph Scene
+        R3F --> BaseCloud["BaseCloud geometry prep"]
+        BaseCloud --> Buffers["Typed arrays
+(positions/colors)"]
+        BaseCloud --> Scales["Shared spread + centering"]
+        Scales --> Overlays["SegmentEdgesMesh / ParentThreads / ResponseHull"]
+        Buffers --> GPU["Three.js
+Points geometry"]
+        GPU --> Canvas["WebGL canvas"]
+        Overlays --> Canvas
+        Canvas --> Tooltip["Hover/tooltip + lasso
+feedback"]
+    end
+
+    %% Feedback loops
+    Tooltip --> RS
+    Legend --> RS
+    DetailsPanel --> RS
+    Notes -->|"PATCH /run/{id}"| API_Update["FastAPI run update"]
+    API_Update --> DB
+
+    %% Continuous UI sync
+    RS --> UIState["Persisted UI state
+(localStorage via zustand/persist)"]
+    UIState --> ControlsPanel
+```

@@ -217,7 +217,7 @@ export const PointDetailsPanel = memo(function PointDetailsPanel() {
         />
       </div>
 
-      <div className="mt-4 flex-1 space-y-4 overflow-y-auto pr-2 text-slate-200">
+      <div className="mt-4 flex-1 min-h-0 space-y-4 overflow-y-auto pr-2 text-slate-200 scrollbar-thin pb-4">
         {bodyContent}
       </div>
     </aside>
@@ -291,8 +291,8 @@ function SegmentDetails({ segment, parent }: SegmentDetailsProps) {
     <article className="space-y-3 rounded-xl border border-slate-800/80 bg-slate-900/40 p-3">
       <header className="flex items-center justify-between text-xs text-slate-400">
         <span>
-          Sample #{segment.response_index} · segment #{segment.position + 1}
-          {segment.role ? ` · ${segment.role}` : ""}
+          Sample #{segment.response_index} Â· segment #{segment.position + 1}
+          {segment.role ? ` Â· ${segment.role}` : ""}
         </span>
         <div className="flex items-center gap-2">
           <span>Cluster {clusterLabel === -1 ? "noise" : clusterLabel}</span>
@@ -328,10 +328,13 @@ function SegmentDetails({ segment, parent }: SegmentDetailsProps) {
         </div>
         {parent ? (
           <p className="text-[11px] text-slate-500">
-            Parent response #{parent.index} · Cluster {parent.cluster ?? "?"}
+            Parent response #{parent.index} Â· Cluster {parent.cluster ?? "?"}
           </p>
         ) : null}
       </footer>
     </article>
   );
 }
+
+
+

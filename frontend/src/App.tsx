@@ -36,7 +36,7 @@ export default function App() {
         <div className="max-w-sm text-center">
           <p className="font-semibold text-slate-200">Awaiting your first landscape</p>
           <p className="mt-2 text-slate-400">
-            Enter a prompt and hit ìGenerateî to sample, embed, and visualize LLM responses in a semantic point cloud.
+            Enter a prompt and hit ‚ÄúGenerate‚Äù to sample, embed, and visualize LLM responses in a semantic point cloud.
           </p>
         </div>
       </div>
@@ -46,15 +46,19 @@ export default function App() {
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-slate-950 text-slate-100">
-      <div className="relative shrink-0">
+      <div className="relative flex h-full shrink-0">
         <ControlsPanel workflow={workflow} />
         <RunHistoryDrawer workflow={workflow} />
       </div>
-      <main className="flex flex-1 flex-col gap-4 p-4">
-        <RunMetadataBar />
-        <RunNotesEditor />
-        <section className="flex h-full gap-4">
-          <div className="relative flex-1">
+      <main className="flex flex-1 min-h-0 flex-col gap-4 overflow-hidden p-4">
+        <div className="shrink-0">
+          <RunMetadataBar />
+        </div>
+        <div className="shrink-0">
+          <RunNotesEditor />
+        </div>
+        <section className="flex flex-1 min-h-0 gap-4">
+          <div className="relative flex flex-1 min-h-0">
             <div className="glass-panel h-full w-full overflow-hidden rounded-2xl border border-slate-800/50">
               {hasData && results ? (
                 <PointCloudScene
@@ -69,7 +73,7 @@ export default function App() {
               {isGenerating ? (
                 <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-slate-950/40 backdrop-blur-sm">
                   <div className="animate-pulse rounded-full border border-cyan-400/60 px-6 py-2 text-sm text-cyan-200">
-                    Sampling responsesÖ
+                    Sampling responses‚Ä¶
                   </div>
                 </div>
               ) : null}
@@ -77,10 +81,12 @@ export default function App() {
           </div>
           <PointDetailsPanel />
         </section>
-        <ClusterLegend
-          responseClusters={results?.clusters ?? []}
-          segmentClusters={results?.segment_clusters ?? []}
-        />
+        <div className="shrink-0">
+          <ClusterLegend
+            responseClusters={results?.clusters ?? []}
+            segmentClusters={results?.segment_clusters ?? []}
+          />
+        </div>
       </main>
     </div>
   );
