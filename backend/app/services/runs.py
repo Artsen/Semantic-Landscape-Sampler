@@ -644,9 +644,10 @@ async def list_recent_runs(session, limit: int = 20) -> list[RunSummary]:
     response_map = {row[0]: int(row[1]) for row in response_counts.all()}
 
     segment_counts_query = (
-        select(ResponseSegment.run_id, func.count())
-        .where(ResponseSegment.run_id.in_(run_ids))
-        .group_by(ResponseSegment.run_id)
+        select(Response.run_id, func.count())
+        .join(ResponseSegment, ResponseSegment.response_id == Response.id)
+        .where(Response.run_id.in_(run_ids))
+        .group_by(Response.run_id)
     )
     segment_counts = await session.exec(segment_counts_query)
     segment_map = {row[0]: int(row[1]) for row in segment_counts.all()}

@@ -38,6 +38,20 @@ Semantic Landscape Sampler is built for rapid sense-making of large language mod
 
 Recent UX improvement: the segment overlays (thread mesh, similarity edges, and response hulls) now share the exact same scaling pipeline as the rendered point cloud. Adjusting the point spread slider keeps every mesh aligned with the visible points, which makes it much easier to reason about relative distances while exploring segments.
 
+## Plain-English Tour
+
+Think of the app as building a map of ideas. Every answer (and even each sentence inside an answer) becomes a dot. Dots that land close are talking about similar things; dots that land far apart are covering different ideas. Here is the journey end-to-end without any jargon:
+
+1. **Collect the text you want to look at.** You pose one question and ask an LLM for N completions. You can also split each completion into smaller pieces—sentences, clauses, or discourse segments—so the map can show both whole answers and their ingredients.
+2. **Describe each piece with numbers.** Computers compare numbers, so each response/segment gets a long numeric profile that captures its meaning. We blend three ingredients: an OpenAI embedding (semantic meaning), a TF-IDF “word fingerprint,” and lightweight prompt-similarity/stats features. Put together, that blend is the item’s fingerprint.
+3. **Squash the high-dimensional fingerprints into coordinates.** UMAP compresses those long vectors into just three numbers (x, y, z) for the 3D view and two numbers (x, y) for the flat map. The axes are not labeled “topic” or “sentiment”; they are simply directions that keep similar fingerprints near each other.
+4. **Persist coordinates, clusters, and overlays.** Each item stores both projections, outlier scores, and cluster metadata. A fixed random seed keeps layouts stable across runs so you can compare experiments.
+5. **Find structure and relationships.** HDBSCAN (with a KMeans fallback) groups nearby dots and computes probabilities. We also build similarity edges, parent/segment thread lines, and response hull outlines—all using the same scaling as the point positions.
+6. **Render and explore.** The frontend feeds the coordinates into a react-three-fiber scene. You get orbit/zoom controls, hover tooltips, lasso selection, legends, density heatmaps, and detail drawers that show the raw text and metrics. A 2D projection powers screenshots and exports.
+7. **Take your insights elsewhere.** Filters let you focus on roles, clusters, or outliers; notes capture context; exports deliver JSON/CSV with text, coordinates, and cluster labels for downstream analysis.
+
+If you remember only one thing: meaning lives in who is near whom. Axis labels are abstract, but proximity, clusters, and overlays reveal how ideas cluster, contrast, and diverge.
+
 ## Key Capabilities
 
 ### Backend
@@ -227,6 +241,16 @@ curl http://localhost:8000/run/<run_id>/results | jq
 ```
 
 These payloads can be imported directly into the frontend store for demos or regression testing.
+
+## Troubleshooting
+
+| Problem | Fix |
+| --- | --- |
+| AttributeError: coverage.types.Tracer when running UMAP | Stick to coverage==7.5.3; the shim in app/services/projection.py patches numba coverage hooks. |
+| table runs has no column named notes | Run the migration snippet in AGENTS.md or delete the SQLite file to recreate it. |
+| Empty scene after sampling | Ensure the backend logs show completed sampling; the frontend now refreshes draw ranges immediately after buffer updates. |
+| Segment mesh does not move with spread slider | Update to this revision; overlays now reuse the same scaled geometry pipeline as the point cloud. |
+| Frontend tests complain about missing pnpm | Install Node 20, run corepack enable, then pnpm install. |
 
 ## How Is This Mapped?
 
