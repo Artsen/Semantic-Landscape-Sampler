@@ -228,16 +228,6 @@ curl http://localhost:8000/run/<run_id>/results | jq
 
 These payloads can be imported directly into the frontend store for demos or regression testing.
 
-## Troubleshooting
-
-| Problem | Fix |
-| --- | --- |
-| AttributeError: coverage.types.Tracer when running UMAP | Stick to coverage==7.5.3; the shim in app/services/projection.py patches numba coverage hooks. |
-| table runs has no column named notes | Run the migration snippet in AGENTS.md or delete the SQLite file to recreate it. |
-| Empty scene after sampling | Ensure the backend logs show completed sampling; the frontend now refreshes draw ranges immediately after buffer updates. |
-| Segment mesh does not move with spread slider | Update to this revision; overlays now reuse the same scaled geometry pipeline as the point cloud. |
-| Frontend tests complain about missing pnpm | Install Node 20, run corepack enable, then pnpm install. |
-
 ## How Is This Mapped?
 
 The picture on screen is the end of a repeatable pipeline that turns raw completions into blended feature vectors, projects them with UMAP, and then rehydrates the geometry in the browser. Here is the full loop:
