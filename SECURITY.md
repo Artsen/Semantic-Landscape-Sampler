@@ -2,23 +2,22 @@
 
 ## Supported Versions
 
-We currently maintain the `main` branch. Please ensure you are testing security fixes against the latest commit before submitting a report.
+We currently support the `main` branch. Please verify issues against the latest commit before reporting.
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability, please:
+If you discover a security vulnerability, please contact us at [crafts.john.86+SLS-security@gmail.com](mailto:crafts.john.86+SLS-security@gmail.com).
 
-1. **Do not** open a public issue describing the problem.
-2. Contact the maintainers privately at **[replace-with-security-contact@example.com](mailto:replace-with-security-contact@example.com)** with a detailed report.
-3. Include steps to reproduce, potential impact, and any suggested fixes if you have them.
-4. Allow up to 72 hours for an initial response. We will coordinate a fix and disclosure timeline with you.
+- Do **not** open a public issue describing the vulnerability.
+- Provide a detailed description, proof-of-concept, and potential impact if possible.
+- We will acknowledge receipt within 72 hours and coordinate a fix and disclosure timeline with you.
 
-If you need encrypted communication, share a public key or request one in your initial email.
+For encrypted communication, request our PGP key in your initial email.
 
 ## Preferred Practices
 
 - Limit testing to systems you control.
-- Avoid data exfiltration; demonstrate proof of vulnerability using minimal data.
-- Provide a proof-of-concept whenever possible so we can reproduce quickly.
+- Avoid accessing or modifying user data; demonstrate the issue with minimal reproduction steps.
+- Provide repro steps or a small script so we can validate quickly.
 
-Thank you for helping us keep Semantic Landscape Sampler secure.
+Thank you for helping keep Semantic Landscape Sampler secure.
