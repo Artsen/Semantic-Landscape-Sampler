@@ -26,7 +26,7 @@ Project maintainers are responsible for clarifying the standards of acceptable b
 
 ## Enforcement
 
-Instances of abusive, harassing, or otherwise unacceptable behaviour may be reported by contacting the maintainers at **[replace-with-contact@example.com](mailto:replace-with-contact@example.com)**. All complaints will be reviewed promptly and fairly. The maintainers are obligated to respect the privacy and security of the reporter of any incident.
+Instances of abusive, harassing, or otherwise unacceptable behaviour may be reported by contacting the maintainers at **[crafts.john.86+SLS-security@gmail.com](crafts.john.86+SLS-security@gmail.com)**. All complaints will be reviewed promptly and fairly. The maintainers are obligated to respect the privacy and security of the reporter of any incident.
 
 ## Scope
 
@@ -37,3 +37,4 @@ This Code of Conduct applies within all project spaces, including pull requests,
 This Code of Conduct is adapted from the [Contributor Covenant](https://www.contributor-covenant.org/), version 2.1.
 
 For answers to common questions about this code of conduct, see the [FAQ](https://www.contributor-covenant.org/faq).
+
