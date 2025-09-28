@@ -9,6 +9,7 @@ Semantic Landscape Sampler fans a single question out across many LLM completion
 - [Semantic Landscape Sampler](#semantic-landscape-sampler)
   - [Table of Contents](#table-of-contents)
   - [Overview](#overview)
+  - [Plain-English Tour](#plain-english-tour)
   - [Key Capabilities](#key-capabilities)
     - [Backend](#backend)
     - [Frontend](#frontend)
@@ -27,7 +28,7 @@ Semantic Landscape Sampler fans a single question out across many LLM completion
     - [Backend](#backend-1)
     - [Frontend](#frontend-1)
   - [Seed Sample Data](#seed-sample-data)
-  - [Troubleshooting](#troubleshooting)
+  - [How Is This Mapped?](#how-is-this-mapped)
   - [Roadmap and Next Steps](#roadmap-and-next-steps)
   - [Contributing](#contributing)
   - [Rendering Pipeline (Mermaid)](#rendering-pipeline-mermaid)
@@ -152,6 +153,8 @@ By default Vite serves on http://localhost:5173 and proxies API calls to http://
 ## Using the Visualiser
 
 ### Controls Reference
+- **Prompt & System Message**: set the user prompt and optional system instructions (leave blank to use the default).
+- **Embedding Model**: choose which OpenAI embedding variant powers similarity (large vs. small vs. Ada).
 - **Point Spread**: rescales the projection while keeping segment meshes, similarity edges, and hulls perfectly aligned with visible points.
 - **Point Size**: adjusts rendered particle size (affects hover thresholds).
 - **Density Overlay**: toggles a heatmap computed in screen space.
@@ -241,16 +244,6 @@ curl http://localhost:8000/run/<run_id>/results | jq
 ```
 
 These payloads can be imported directly into the frontend store for demos or regression testing.
-
-## Troubleshooting
-
-| Problem | Fix |
-| --- | --- |
-| AttributeError: coverage.types.Tracer when running UMAP | Stick to coverage==7.5.3; the shim in app/services/projection.py patches numba coverage hooks. |
-| table runs has no column named notes | Run the migration snippet in AGENTS.md or delete the SQLite file to recreate it. |
-| Empty scene after sampling | Ensure the backend logs show completed sampling; the frontend now refreshes draw ranges immediately after buffer updates. |
-| Segment mesh does not move with spread slider | Update to this revision; overlays now reuse the same scaled geometry pipeline as the point cloud. |
-| Frontend tests complain about missing pnpm | Install Node 20, run corepack enable, then pnpm install. |
 
 ## How Is This Mapped?
 
