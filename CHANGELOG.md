@@ -4,8 +4,10 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [Unreleased]
 ### Added
-- Initial CHANGELOG stub.
-- CONTRIBUTING, CODE_OF_CONDUCT, and SECURITY guides.
+- Model pricing tables for OpenAI chat + embedding families with per-response and per-chunk cost computation.
+- API + UI support for selecting system messages, embedding models, and viewing token/cost breakdowns.
+- Token counting utility backed by tiktoken with fallback heuristics.
+- `tiktoken` dependency and pricing utilities module.
 
 ## [0.1.0] - 2025-09-20
 ### Added

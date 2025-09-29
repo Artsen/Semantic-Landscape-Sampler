@@ -23,12 +23,16 @@ type SelectionUpdater = (current: string[]) => string[];
 
 export interface RunStoreState {
   prompt: string;
+  systemPrompt: string;
   n: number;
   temperature: number;
   topP: number;
   model: string;
   seed?: number | null;
   maxTokens?: number | null;
+  embeddingModel: string;
+  chunkSize: number;
+  chunkOverlap: number;
   viewMode: SceneDimension;
   levelMode: LevelMode;
   pointSize: number;
@@ -44,6 +48,10 @@ export interface RunStoreState {
   hoveredPointId?: string;
   hoveredSegmentId?: string;
   focusedResponseId?: string;
+  progressStage: string | null;
+  progressMessage: string | null;
+  progressPercent: number | null;
+  progressMetadata: Record<string, unknown> | null;
   hoveredClusterLabel: number | null;
   runHistory: RunSummary[];
   selectedPointIds: string[];
@@ -52,12 +60,16 @@ export interface RunStoreState {
   clusterPalette: Record<string, string>;
   roleVisibility: RoleVisibilityMap;
   setPrompt: (value: string) => void;
+  setSystemPrompt: (value: string) => void;
   setN: (value: number) => void;
   setTemperature: (value: number) => void;
   setTopP: (value: number) => void;
   setModel: (value: string) => void;
   setSeed: (value: number | null) => void;
   setMaxTokens: (value: number | null) => void;
+  setEmbeddingModel: (value: string) => void;
+  setChunkSize: (value: number) => void;
+  setChunkOverlap: (value: number) => void;
   setViewMode: (mode: SceneDimension) => void;
   setLevelMode: (mode: LevelMode) => void;
   setPointSize: (value: number) => void;
@@ -83,6 +95,12 @@ export interface RunStoreState {
   setClusterPalette: (palette: Record<string, string>) => void;
   selectTopOutliers: (count?: number) => void;
   selectTopSegmentOutliers: (count?: number) => void;
+  setProgress: (payload: {
+    stage?: string | null;
+    message?: string | null;
+    percent?: number | null;
+    metadata?: Record<string, unknown> | null;
+  }) => void;
   startGeneration: () => void;
   finishGeneration: (runId: string, results?: RunResultsResponse) => void;
   setResults: (results: RunResultsResponse) => void;
@@ -92,12 +110,16 @@ export interface RunStoreState {
 const defaultState: Pick<
   RunStoreState,
   | "prompt"
+  | "systemPrompt"
   | "n"
   | "temperature"
   | "topP"
   | "model"
   | "seed"
   | "maxTokens"
+  | "embeddingModel"
+  | "chunkSize"
+  | "chunkOverlap"
   | "viewMode"
   | "levelMode"
   | "pointSize"
@@ -113,12 +135,16 @@ const defaultState: Pick<
   | "hoveredClusterLabel"
 > = {
   prompt: "How will climate change transform urban living in the next decade?",
+  systemPrompt: "Return a concise answer with reasoning steps suppressed; vary framing and examples.",
   n: 40,
   temperature: 0.9,
   topP: 1,
   model: "gpt-4.1-mini",
   seed: null,
   maxTokens: 800,
+  embeddingModel: "text-embedding-3-large",
+  chunkSize: 3,
+  chunkOverlap: 1,
   viewMode: "3d",
   levelMode: "responses",
   pointSize: 0.06,
@@ -132,6 +158,10 @@ const defaultState: Pick<
   clusterPalette: {},
   roleVisibility: {},
   hoveredClusterLabel: null,
+  progressStage: null,
+  progressMessage: null,
+  progressPercent: null,
+  progressMetadata: null,
 };
 
 export const useRunStore = create<RunStoreState>()(
@@ -139,6 +169,7 @@ export const useRunStore = create<RunStoreState>()(
     (set, get) => ({
       ...defaultState,
       jitterToken: null,
+      chunkOverlap: defaultState.chunkOverlap ?? 1,
       isHistoryOpen: false,
       isGenerating: false,
       currentRunId: undefined,
@@ -146,12 +177,31 @@ export const useRunStore = create<RunStoreState>()(
       hoveredPointId: undefined,
       hoveredSegmentId: undefined,
       focusedResponseId: undefined,
+      progressStage: null,
+      progressMessage: null,
+      progressPercent: null,
+      progressMetadata: null,
       runHistory: [],
       setPrompt: (value) => set({ prompt: value }),
+      setSystemPrompt: (value) => set({ systemPrompt: value }),
       setN: (value) => set({ n: value }),
       setTemperature: (value) => set({ temperature: value }),
       setTopP: (value) => set({ topP: value }),
       setModel: (value) => set({ model: value }),
+      setEmbeddingModel: (value) => set({ embeddingModel: value }),
+      setChunkSize: (value) =>
+        set((state) => {
+          const size = Math.min(30, Math.max(1, Math.round(value)));
+          const maxOverlap = Math.max(0, size - 1);
+          const nextOverlap = Math.min(state.chunkOverlap, maxOverlap);
+          return { chunkSize: size, chunkOverlap: nextOverlap };
+        }),
+      setChunkOverlap: (value) =>
+        set((state) => {
+          const maxOverlap = Math.max(0, state.chunkSize - 1);
+          const normalised = Math.min(maxOverlap, Math.max(0, Math.round(value)));
+          return { chunkOverlap: normalised };
+        }),
       setSeed: (value) => set({ seed: value ?? null }),
       setMaxTokens: (value) => set({ maxTokens: value ?? null }),
       setViewMode: (mode) => set({ viewMode: mode }),
@@ -171,12 +221,18 @@ export const useRunStore = create<RunStoreState>()(
       applyRunSummary: (run) =>
         set((state) => ({
           prompt: run.prompt,
+          systemPrompt: run.system_prompt ?? defaultState.systemPrompt,
           n: run.n,
           model: run.model,
+          embeddingModel: run.embedding_model ?? state.embeddingModel,
           temperature: run.temperature,
           topP: run.top_p ?? state.topP,
           seed: run.seed ?? null,
           maxTokens: run.max_tokens ?? null,
+          progressStage: run.progress_stage ?? state.progressStage,
+          progressMessage: run.progress_message ?? state.progressMessage,
+          progressPercent: run.progress_percent ?? state.progressPercent,
+          progressMetadata: run.progress_metadata ?? state.progressMetadata,
         })),
       setFocusedResponse: (value) => set({ focusedResponseId: value }),
       setRunHistory: (runs) => set({ runHistory: runs }),
@@ -269,6 +325,19 @@ export const useRunStore = create<RunStoreState>()(
           set({ selectedSegmentIds: ranked, levelMode: "segments" });
         }
       },
+      setProgress: ({ stage, message, percent, metadata }) =>
+        set((state) => ({
+          progressStage: stage !== undefined ? stage ?? null : state.progressStage,
+          progressMessage: message !== undefined ? message ?? null : state.progressMessage,
+          progressPercent:
+            percent !== undefined
+              ? percent === null
+                ? null
+                : Math.min(1, Math.max(0, percent))
+              : state.progressPercent,
+          progressMetadata: metadata !== undefined ? metadata ?? null : state.progressMetadata,
+        })),
+      
       startGeneration: () =>
         set({
           isGenerating: true,
@@ -278,6 +347,10 @@ export const useRunStore = create<RunStoreState>()(
           hoveredSegmentId: undefined,
           focusedResponseId: undefined,
           hoveredClusterLabel: null,
+          progressStage: "queued",
+          progressMessage: "Submitting run to backend...",
+          progressPercent: 0,
+          progressMetadata: null,
         }),
       finishGeneration: (runId, results) =>
         set((state) => ({
@@ -286,6 +359,10 @@ export const useRunStore = create<RunStoreState>()(
           results: results ?? state.results,
           focusedResponseId: undefined,
           hoveredClusterLabel: null,
+          progressStage: results ? null : state.progressStage,
+          progressMessage: results ? null : state.progressMessage,
+          progressPercent: results ? null : state.progressPercent,
+          progressMetadata: results ? null : state.progressMetadata,
         })),
       setResults: (results) => {
         const palette = buildClusterPalette(results.clusters);
@@ -302,6 +379,9 @@ export const useRunStore = create<RunStoreState>()(
           });
         set({
           results,
+          systemPrompt: results.run.system_prompt ?? defaultState.systemPrompt,
+          embeddingModel: results.run.embedding_model ?? defaultState.embeddingModel,
+          chunkSize: results.run.chunk_size ?? results.chunk_size ?? defaultState.chunkSize,
           clusterPalette: palette,
           clusterVisibility: visibility,
           roleVisibility,
@@ -309,6 +389,10 @@ export const useRunStore = create<RunStoreState>()(
           selectedSegmentIds: [],
           focusedResponseId: undefined,
           hoveredClusterLabel: null,
+          progressStage: null,
+          progressMessage: null,
+          progressPercent: null,
+          progressMetadata: null,
         });
       },
       reset: () =>
@@ -329,12 +413,16 @@ export const useRunStore = create<RunStoreState>()(
       name: "semantic-landscape-run-store",
       partialize: ({
         prompt,
+        systemPrompt,
         n,
         temperature,
         topP,
         model,
         seed,
         maxTokens,
+        embeddingModel,
+        chunkSize,
+        chunkOverlap,
         viewMode,
         levelMode,
         pointSize,
@@ -344,12 +432,16 @@ export const useRunStore = create<RunStoreState>()(
         showParentThreads,
       }) => ({
         prompt,
+        systemPrompt,
         n,
         temperature,
         topP,
         model,
         seed,
         maxTokens,
+        embeddingModel,
+        chunkSize,
+        chunkOverlap,
         viewMode,
         levelMode,
         pointSize,

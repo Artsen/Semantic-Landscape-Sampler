@@ -47,6 +47,9 @@ async def test_run_service_persists_sampling_artifacts(session):
     run_loaded, responses, projections, clusters, embeddings, segments, edges, hulls = details
 
     assert run_loaded.status == RunStatus.COMPLETED
+    assert run_loaded.progress_stage == "completed"
+    assert run_loaded.progress_message
+    assert run_loaded.progress_percent == pytest.approx(1.0)
     assert len(responses) == 3
     assert len(embeddings) == 3
     assert len(segments) >= 3

@@ -13,7 +13,7 @@ from datetime import datetime
 from typing import Any, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field, HttpUrl, field_validator
+from pydantic import BaseModel, Field, HttpUrl, ValidationInfo, field_validator
 
 
 class RunCreateRequest(BaseModel):
@@ -24,6 +24,26 @@ class RunCreateRequest(BaseModel):
     top_p: Optional[float] = Field(default=1.0, ge=0.0, le=1.0)
     seed: Optional[int] = Field(default=None, ge=0)
     max_tokens: Optional[int] = Field(default=None, ge=16, le=4096)
+    chunk_size: Optional[int] = Field(default=None, ge=1, le=30)
+    chunk_overlap: Optional[int] = Field(default=None, ge=0, le=30)
+    system_prompt: Optional[str] = Field(default=None, max_length=4000)
+
+    @field_validator("chunk_overlap")
+    @classmethod
+    def clamp_chunk_overlap(
+        cls,
+        value: Optional[int],
+        info: ValidationInfo,
+    ) -> Optional[int]:
+        if value is None:
+            return None
+        chunk_size = info.data.get("chunk_size")
+        if chunk_size is not None:
+            max_overlap = max(chunk_size - 1, 0)
+            return min(value, max_overlap)
+        return value
+
+    embedding_model: Optional[str] = None
     notes: Optional[str] = Field(default=None, max_length=2000)
 
     @field_validator("prompt")
@@ -34,6 +54,14 @@ class RunCreateRequest(BaseModel):
     @field_validator("notes")
     @classmethod
     def normalise_notes(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        text = value.strip()
+        return text or None
+
+    @field_validator("system_prompt")
+    @classmethod
+    def normalise_system_prompt(cls, value: Optional[str]) -> Optional[str]:
         if value is None:
             return None
         text = value.strip()
@@ -62,6 +90,10 @@ class RunResource(BaseModel):
     prompt: str
     n: int
     model: str
+    chunk_size: Optional[int]
+    chunk_overlap: Optional[int]
+    system_prompt: Optional[str]
+    embedding_model: str
     temperature: float
     top_p: Optional[float]
     seed: Optional[int]
@@ -71,6 +103,10 @@ class RunResource(BaseModel):
     updated_at: datetime
     error_message: Optional[str] = None
     notes: Optional[str] = None
+    progress_stage: Optional[str] = None
+    progress_message: Optional[str] = None
+    progress_percent: Optional[float] = None
+    progress_metadata: Optional[dict[str, Any]] = None
 
 
 class RunSummary(BaseModel):
@@ -78,6 +114,10 @@ class RunSummary(BaseModel):
     prompt: str
     n: int
     model: str
+    chunk_size: Optional[int]
+    chunk_overlap: Optional[int]
+    system_prompt: Optional[str]
+    embedding_model: str
     temperature: float
     top_p: Optional[float]
     seed: Optional[int]
@@ -88,6 +128,10 @@ class RunSummary(BaseModel):
     response_count: int
     segment_count: int
     notes: Optional[str] = None
+    progress_stage: Optional[str] = None
+    progress_message: Optional[str] = None
+    progress_percent: Optional[float] = None
+    progress_metadata: Optional[dict[str, Any]] = None
 
 
 class SampleRequest(BaseModel):
@@ -117,6 +161,12 @@ class ResponsePoint(BaseModel):
     probability: Optional[float]
     similarity_to_centroid: Optional[float]
     outlier_score: Optional[float] = None
+    prompt_tokens: Optional[int] = None
+    completion_tokens: Optional[int] = None
+    embedding_tokens: Optional[int] = None
+    completion_cost: Optional[float] = None
+    embedding_cost: Optional[float] = None
+    total_cost: Optional[float] = None
     coords_3d: tuple[float, float, float]
     coords_2d: tuple[float, float]
 
@@ -129,6 +179,8 @@ class SegmentPoint(BaseModel):
     text: str
     role: Optional[str]
     tokens: Optional[int]
+    embedding_tokens: Optional[int] = None
+    embedding_cost: Optional[float] = None
     prompt_similarity: Optional[float]
     silhouette_score: Optional[float]
     cluster: Optional[int]
@@ -173,6 +225,17 @@ class ResponseHull(BaseModel):
     coords_3d: list[tuple[float, float, float]]
 
 
+class RunCostSummary(BaseModel):
+    model: str
+    embedding_model: str
+    completion_input_tokens: int
+    completion_output_tokens: int
+    completion_cost: float
+    embedding_tokens: int
+    embedding_cost: float
+    total_cost: float
+
+
 class RunResultsResponse(BaseModel):
     run: RunResource
     points: list[ResponsePoint]
@@ -183,7 +246,12 @@ class RunResultsResponse(BaseModel):
     response_hulls: list[ResponseHull]
     prompt: str
     model: str
+    system_prompt: Optional[str]
+    embedding_model: str
     n: int
+    costs: RunCostSummary
+    chunk_size: Optional[int] | None = None
+    chunk_overlap: Optional[int] | None = None
 
 
 class ExportRow(BaseModel):
@@ -209,5 +277,3 @@ class ExportRow(BaseModel):
             f"{self.y:.6f}",
             f"{self.z:.6f}" if self.z is not None else "",
         ]
-
-

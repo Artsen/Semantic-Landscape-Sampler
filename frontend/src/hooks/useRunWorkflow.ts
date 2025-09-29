@@ -10,20 +10,37 @@
 import { useMutation } from "@tanstack/react-query";
 import { useState } from "react";
 
-import { createRun, exportRunData, fetchRunResults, sampleRun } from "@/services/api";
-import type { CreateRunPayload, RunSummary } from "@/types/run";
+import {
+  createRun,
+  exportRunData,
+  fetchRun,
+  fetchRunResults,
+  sampleRun,
+} from "@/services/api";
+import type { CreateRunPayload, RunSummary, SampleRunBody } from "@/types/run";
 import { useRunStore } from "@/store/runStore";
+
+const POLL_INTERVAL_MS = 2000;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const toError = (error: unknown, fallbackMessage: string) =>
+  error instanceof Error ? error : new Error(fallbackMessage);
 
 export function useRunWorkflow() {
   const [error, setError] = useState<string | null>(null);
   const {
     prompt,
+    systemPrompt,
     n,
     temperature,
     topP,
     model,
     seed,
     maxTokens,
+    embeddingModel,
+    chunkSize,
+    chunkOverlap,
     jitterToken,
     startGeneration,
     finishGeneration,
@@ -33,7 +50,63 @@ export function useRunWorkflow() {
     applyRunSummary,
     setCurrentRunId,
     setHistoryOpen,
+    setProgress,
   } = useRunStore();
+
+  const pushProgress = (resourceProgress: {
+    progress_stage?: string | null;
+    progress_message?: string | null;
+    progress_percent?: number | null;
+    progress_metadata?: Record<string, unknown> | null;
+  }) => {
+    setProgress({
+      stage: resourceProgress.progress_stage ?? null,
+      message: resourceProgress.progress_message ?? null,
+      percent: resourceProgress.progress_percent ?? null,
+      metadata: resourceProgress.progress_metadata ?? null,
+    });
+  };
+
+  const waitForCompletion = async (runId: string) => {
+    for (;;) {
+      let resource;
+      try {
+        resource = await fetchRun(runId);
+      } catch (err) {
+        throw toError(err, "Failed to fetch run progress");
+      }
+
+      pushProgress(resource);
+
+      if (resource.status === "completed") {
+        return;
+      }
+      if (resource.status === "failed") {
+        throw new Error(resource.error_message ?? "Run failed");
+      }
+
+      await sleep(POLL_INTERVAL_MS);
+    }
+  };
+
+  const runAndPoll = async (payload: CreateRunPayload, sampleBody: SampleRunBody) => {
+    const { run_id } = await createRun(payload);
+
+    const waitPromise = waitForCompletion(run_id);
+    const samplePromise = sampleRun(run_id, sampleBody);
+
+    const [waitOutcome, sampleOutcome] = await Promise.allSettled([waitPromise, samplePromise]);
+
+    if (sampleOutcome.status === "rejected") {
+      console.error("Sampling request failed", sampleOutcome.reason);
+    }
+    if (waitOutcome.status === "rejected") {
+      throw toError(waitOutcome.reason, "Run failed");
+    }
+
+    const runResults = await fetchRunResults(run_id);
+    return { runId: run_id, runResults };
+  };
 
   const loadMutation = useMutation({
     mutationKey: ["load-run-from-history"],
@@ -70,15 +143,17 @@ export function useRunWorkflow() {
         top_p: topP,
         seed: seed ?? undefined,
         max_tokens: maxTokens ?? undefined,
+        chunk_size: chunkSize ?? undefined,
+        chunk_overlap: chunkOverlap ?? undefined,
+        system_prompt: systemPrompt.trim() ? systemPrompt : undefined,
+        embedding_model: embeddingModel,
       };
-      const { run_id } = await createRun(payload);
-      await sampleRun(run_id, {
+      const sampleBody: SampleRunBody = {
         jitter_prompt_token: jitterToken ?? undefined,
         include_segments: true,
         include_discourse_tags: true,
-      });
-      const runResults = await fetchRunResults(run_id);
-      return { runId: run_id, runResults };
+      };
+      return runAndPoll(payload, sampleBody);
     },
     onMutate: () => {
       setError(null);
@@ -100,20 +175,19 @@ export function useRunWorkflow() {
     mutationFn: async (summary: RunSummary) => {
       const payload: CreateRunPayload = {
         prompt: summary.prompt,
+        system_prompt: summary.system_prompt ?? undefined,
         n: summary.n,
         model: summary.model,
+        embedding_model: summary.embedding_model,
         temperature: summary.temperature,
         top_p: summary.top_p ?? undefined,
         seed: summary.seed ?? undefined,
         max_tokens: summary.max_tokens ?? undefined,
+        chunk_size: summary.chunk_size ?? undefined,
+        chunk_overlap: summary.chunk_overlap ?? undefined,
       };
-      const { run_id } = await createRun(payload);
-      await sampleRun(run_id, {
-        include_segments: true,
-        include_discourse_tags: true,
-      });
-      const runResults = await fetchRunResults(run_id);
-      return { runId: run_id, runResults };
+      const sampleBody: SampleRunBody = { include_segments: true, include_discourse_tags: true };
+      return runAndPoll(payload, sampleBody);
     },
     onMutate: (summary) => {
       setError(null);
@@ -158,7 +232,7 @@ export function useRunWorkflow() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `semantic-landscape-${runId}.${format}`;
+    link.download = "semantic-landscape-" + runId + "." + format;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);

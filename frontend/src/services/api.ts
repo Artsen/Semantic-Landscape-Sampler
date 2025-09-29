@@ -65,6 +65,12 @@ export async function fetchRunResults(runId: string): Promise<RunResultsResponse
   });
 }
 
+export async function fetchRun(runId: string): Promise<RunResource> {
+  return handleResponse<RunResource>(`${API_BASE_URL}/run/${runId}`, {
+    method: "GET",
+  });
+}
+
 export async function fetchRuns(limit = 20): Promise<RunSummary[]> {
   const params = new URLSearchParams({ limit: String(limit) });
   return handleResponse<RunSummary[]>(`${API_BASE_URL}/run?${params.toString()}`);

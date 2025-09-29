@@ -19,6 +19,7 @@ from .run import (
     SegmentEdge,
     SegmentPoint,
     UsageInfo,
+    RunCostSummary,
 )
 
 __all__ = [
@@ -37,4 +38,5 @@ __all__ = [
     "ResponseHull",
     "ExportRow",
     "UsageInfo",
+    "RunCostSummary",
 ]

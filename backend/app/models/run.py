@@ -14,7 +14,7 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID, uuid4
 
-from sqlalchemy import Column, Text, event
+from sqlalchemy import Column, Float, Integer, Text, event
 from sqlmodel import Field, SQLModel
 
 
@@ -35,16 +35,21 @@ class Run(SQLModel, table=True):
     top_p: Optional[float] = None
     seed: Optional[int] = None
     max_tokens: Optional[int] = None
+    chunk_size: Optional[int] = Field(default=None, sa_column=Column(Integer))
+    chunk_overlap: Optional[int] = Field(default=None, sa_column=Column(Integer))
+    system_prompt: Optional[str] = Field(default=None, sa_column=Column(Text))
+    embedding_model: str = Field(default="text-embedding-3-large")
     status: str = Field(default=RunStatus.PENDING)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
     error_message: Optional[str] = None
     notes: Optional[str] = Field(default=None, sa_column=Column(Text))
+    progress_stage: Optional[str] = Field(default=None, sa_column=Column(Text))
+    progress_message: Optional[str] = Field(default=None, sa_column=Column(Text))
+    progress_percent: Optional[float] = Field(default=None, sa_column=Column(Float))
+    progress_metadata: Optional[str] = Field(default=None, sa_column=Column(Text))
 
 
 @event.listens_for(Run, "before_update", propagate=True)
 def set_updated_at(_, __, target):
     target.updated_at = datetime.utcnow()
-
-
-

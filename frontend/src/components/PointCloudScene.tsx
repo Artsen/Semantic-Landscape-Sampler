@@ -347,6 +347,22 @@ function BaseCloud<T extends CloudPoint>({
 
   const overlayElement = overlay ? overlay({ points, scales, viewMode, geometry: prepared }) : null;
 
+  const hoveredBuffer = useMemo(() => {
+    if (!hoveredId) {
+      return null;
+    }
+    const index = prepared.idToIndex.get(hoveredId);
+    if (index == null) {
+      return null;
+    }
+    const offset = index * 3;
+    const buffer = new Float32Array(3);
+    buffer[0] = prepared.positions[offset];
+    buffer[1] = prepared.positions[offset + 1];
+    buffer[2] = prepared.positions[offset + 2];
+    return buffer;
+  }, [hoveredId, prepared]);
+
   return (
     <div ref={containerRef} className="relative h-full w-full">
       <Canvas
@@ -365,6 +381,11 @@ function BaseCloud<T extends CloudPoint>({
           onSelect={handleSelect}
           onProjectedUpdate={handleProjectedUpdate}
         />
+        {hoveredBuffer ? (
+          <Points positions={hoveredBuffer}>
+            <PointMaterial color="#f8fafc" size={pointSize * 1.8} sizeAttenuation transparent depthWrite={false} />
+          </Points>
+        ) : null}
         {overlayElement}
         <Stats className="text-xs" />
       </Canvas>
@@ -806,6 +827,30 @@ const SegmentCloud = memo(function SegmentCloud({ segments, edges, hulls }: Segm
     [segments, roleVisibility],
   );
 
+  const sequenceRatios = useMemo(() => {
+    const maxByResponse = new Map<string, number>();
+    segments.forEach((segment) => {
+      const current = maxByResponse.get(segment.response_id);
+      const nextValue = Math.max(current ?? Number.NEGATIVE_INFINITY, segment.position);
+      maxByResponse.set(segment.response_id, nextValue);
+    });
+    const ratios = new Map<string, number>();
+    segments.forEach((segment) => {
+      const maxPosition = maxByResponse.get(segment.response_id);
+      if (maxPosition == null || maxPosition <= 0) {
+        ratios.set(segment.id, 0);
+        return;
+      }
+      ratios.set(segment.id, Math.max(0, Math.min(1, segment.position / maxPosition)));
+    });
+    return ratios;
+  }, [segments]);
+
+  const [startColor, midColor, endColor] = useMemo(
+    () => [new THREE.Color("#16a34a"), new THREE.Color("#2563eb"), new THREE.Color("#dc2626")],
+    [],
+  );
+
   const visibleSegments = useMemo(
     () =>
       roleFiltered.filter((segment) => {
@@ -820,12 +865,18 @@ const SegmentCloud = memo(function SegmentCloud({ segments, edges, hulls }: Segm
 
   const colorize = useCallback(
     ({ point, color }: { point: SegmentPoint; color: THREE.Color }) => {
-      if (point.role) {
-        const roleHue = Math.abs(point.role.split("").reduce((acc, char) => acc + char.charCodeAt(0), 0)) % 360;
-        color.lerp(new THREE.Color(`hsl(${roleHue}deg 70% 60%)`), 0.25);
+      const ratio = sequenceRatios.get(point.id) ?? 0;
+      const clampRatio = Math.max(0, Math.min(1, ratio));
+      const midPoint = 0.5;
+      if (clampRatio <= midPoint) {
+        const t = clampRatio / midPoint;
+        color.copy(startColor).lerp(midColor, t);
+      } else {
+        const t = (clampRatio - midPoint) / midPoint;
+        color.copy(midColor).lerp(endColor, t);
       }
     },
-    [],
+    [sequenceRatios, startColor, midColor, endColor],
   );
 
   const tooltipTitle = useCallback((segment: SegmentPoint) => {

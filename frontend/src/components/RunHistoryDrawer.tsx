@@ -138,10 +138,10 @@ export const RunHistoryDrawer = memo(function RunHistoryDrawer({ workflow }: Run
   const historyCountLabel = `${runHistory.length} stored runs`;
   const statusBadges: string[] = [];
   if (isLoadingHistory) {
-    statusBadges.push("Loading run…");
+    statusBadges.push("Loading runï¿½");
   }
   if (isDuplicating) {
-    statusBadges.push("Re-running…");
+    statusBadges.push("Re-runningï¿½");
   }
 
   return (
@@ -162,7 +162,7 @@ export const RunHistoryDrawer = memo(function RunHistoryDrawer({ workflow }: Run
       </header>
 
       <div className="mt-4 flex items-center justify-between text-[11px] uppercase tracking-wide text-slate-500">
-        <span>{isFetching ? "Refreshing…" : historyCountLabel}</span>
+        <span>{isFetching ? "Refreshingï¿½" : historyCountLabel}</span>
         {statusBadges.length ? (
           <div className="flex gap-3 text-cyan-200">
             {statusBadges.map((label) => (
@@ -207,6 +207,7 @@ export const RunHistoryDrawer = memo(function RunHistoryDrawer({ workflow }: Run
 
                       <div className="mt-3 flex flex-wrap gap-2 text-[11px]">
                         <span className={badgeClass}>Model {run.model}</span>
+            <span className={badgeClass}>Embedding {run.embedding_model}</span>
                         <span className={badgeClass}>Temp {run.temperature.toFixed(2)}</span>
                         {run.top_p != null ? <span className={badgeClass}>Top-p {run.top_p.toFixed(2)}</span> : null}
                         {run.seed != null ? <span className={badgeClass}>Seed {run.seed}</span> : null}
@@ -214,6 +215,9 @@ export const RunHistoryDrawer = memo(function RunHistoryDrawer({ workflow }: Run
                         <span className={badgeClass}>Responses {run.response_count}</span>
                         {run.segment_count ? (
                           <span className={badgeClass}>Segments {run.segment_count}</span>
+                        ) : null}
+                        {run.chunk_size ? (
+                          <span className={badgeClass}>Chunk {run.chunk_size} w</span>
                         ) : null}
                         <span className={badgeClass}>Status {run.status}</span>
                       </div>

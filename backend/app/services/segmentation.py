@@ -19,8 +19,9 @@ from uuid import UUID, uuid4
 
 _SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"])")
 _BULLET_BOUNDARY = re.compile(r"\n[-*+]\s+")
-_WHITESPACE = re.compile(r"\s+")
 _WORD_PATTERN = re.compile(r"\b[\w'-]+\b")
+
+from app.utils.tokenization import count_tokens as count_model_tokens
 
 ROLE_KEYWORDS: dict[str, tuple[str, ...]] = {
     "problem": ("challenge", "problem", "issue", "risk", "threat"),
@@ -87,12 +88,6 @@ def estimate_role(text: str) -> str | None:
     return None
 
 
-def count_tokens(text: str) -> int:
-    if not text:
-        return 0
-    return len(_WHITESPACE.split(text.strip()))
-
-
 def make_segment_drafts(
     response_id: UUID,
     response_index: int,
@@ -115,7 +110,7 @@ def make_segment_drafts(
                     position=position,
                     text=window_text,
                     role=role,
-                    tokens=count_tokens(window_text),
+                    tokens=count_model_tokens(window_text, None),
                 )
             )
             position += 1

@@ -234,6 +234,11 @@ function ResponseDetails({ point }: ResponseDetailsProps) {
   const similarity = point.similarity_to_centroid;
   const similarityPct = similarity != null ? Math.round(((similarity + 1) / 2) * 100) : undefined;
   const outlierPct = outlierScore != null ? Math.round(outlierScore * 100) : undefined;
+  const hasCompletionCost = point.completion_cost != null;
+  const hasEmbeddingCost = point.embedding_cost != null;
+  const completionCost = hasCompletionCost ? point.completion_cost ?? 0 : null;
+  const embeddingCost = hasEmbeddingCost ? point.embedding_cost ?? 0 : null;
+  const totalCost = point.total_cost ?? (completionCost ?? 0) + (embeddingCost ?? 0);
 
   return (
     <article className="space-y-3 rounded-xl border border-slate-800/80 bg-slate-900/40 p-3">
@@ -264,6 +269,21 @@ function ResponseDetails({ point }: ResponseDetailsProps) {
         </div>
       </div>
 
+      <div className="grid grid-cols-2 gap-2 rounded-lg border border-slate-800/70 bg-slate-900/30 p-2 text-[11px] text-slate-300">
+        <div>
+          <p className="font-semibold text-slate-200">Tokens</p>
+          <p>Prompt: {point.prompt_tokens ?? "--"}</p>
+          <p>Completion: {point.completion_tokens ?? "--"}</p>
+          <p>Embedding: {point.embedding_tokens ?? "--"}</p>
+        </div>
+        <div>
+          <p className="font-semibold text-slate-200">Cost (USD)</p>
+          <p>Completion: {hasCompletionCost ? `$${(completionCost ?? 0).toFixed(6)}` : "--"}</p>
+          <p>Embedding: {hasEmbeddingCost ? `$${(embeddingCost ?? 0).toFixed(6)}` : "--"}</p>
+          <p>Total: {hasCompletionCost || hasEmbeddingCost ? `$${totalCost.toFixed(6)}` : "--"}</p>
+        </div>
+      </div>
+
       <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-100">{point.full_text}</p>
 
       <footer className="grid grid-cols-3 gap-2 text-[11px] text-slate-400">
@@ -286,6 +306,8 @@ function SegmentDetails({ segment, parent }: SegmentDetailsProps) {
   const similarity = segment.similarity_to_centroid;
   const similarityPct = similarity != null ? Math.round(((similarity + 1) / 2) * 100) : undefined;
   const outlierPct = outlierScore != null ? Math.round(outlierScore * 100) : undefined;
+  const hasEmbeddingCost = segment.embedding_cost != null;
+  const embeddingCost = hasEmbeddingCost ? segment.embedding_cost ?? 0 : null;
 
   return (
     <article className="space-y-3 rounded-xl border border-slate-800/80 bg-slate-900/40 p-3">
@@ -325,6 +347,7 @@ function SegmentDetails({ segment, parent }: SegmentDetailsProps) {
         <div className="flex gap-3">
           <span>Tokens: {segment.tokens ?? "--"}</span>
           <span>Prompt sim: {segment.prompt_similarity != null ? segment.prompt_similarity.toFixed(2) : "--"}</span>
+          <span>Embedding cost: {hasEmbeddingCost ? `$${(embeddingCost ?? 0).toFixed(6)}` : "--"}</span>
         </div>
         {parent ? (
           <p className="text-[11px] text-slate-500">

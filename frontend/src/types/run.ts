@@ -9,6 +9,10 @@ export interface RunResource {
   prompt: string;
   n: number;
   model: string;
+  chunk_size?: number | null;
+  chunk_overlap?: number | null;
+  system_prompt?: string | null;
+  embedding_model: string;
   temperature: number;
   top_p?: number | null;
   seed?: number | null;
@@ -18,6 +22,10 @@ export interface RunResource {
   updated_at: string;
   error_message?: string | null;
   notes?: string | null;
+  progress_stage?: string | null;
+  progress_message?: string | null;
+  progress_percent?: number | null;
+  progress_metadata?: Record<string, unknown> | null;
 }
 
 export interface RunSummary {
@@ -25,6 +33,10 @@ export interface RunSummary {
   prompt: string;
   n: number;
   model: string;
+  chunk_size?: number | null;
+  chunk_overlap?: number | null;
+  system_prompt?: string | null;
+  embedding_model: string;
   temperature: number;
   top_p?: number | null;
   seed?: number | null;
@@ -35,6 +47,10 @@ export interface RunSummary {
   response_count: number;
   segment_count: number;
   notes?: string | null;
+  progress_stage?: string | null;
+  progress_message?: string | null;
+  progress_percent?: number | null;
+  progress_metadata?: Record<string, unknown> | null;
 }
 
 export interface UsageInfo {
@@ -55,6 +71,12 @@ export interface ResponsePoint {
   probability?: number | null;
   similarity_to_centroid?: number | null;
   outlier_score?: number | null;
+   prompt_tokens?: number | null;
+   completion_tokens?: number | null;
+   embedding_tokens?: number | null;
+  completion_cost?: number | null;
+  embedding_cost?: number | null;
+  total_cost?: number | null;
   coords_3d: [number, number, number];
   coords_2d: [number, number];
 }
@@ -67,6 +89,8 @@ export interface SegmentPoint {
   text: string;
   role?: string | null;
   tokens?: number | null;
+  embedding_tokens?: number | null;
+  embedding_cost?: number | null;
   prompt_similarity?: number | null;
   silhouette_score?: number | null;
   cluster?: number | null;
@@ -111,6 +135,17 @@ export interface ResponseHull {
   coords_3d: Array<[number, number, number]>;
 }
 
+export interface RunCostSummary {
+  model: string;
+  embedding_model: string;
+  completion_input_tokens: number;
+  completion_output_tokens: number;
+  completion_cost: number;
+  embedding_tokens: number;
+  embedding_cost: number;
+  total_cost: number;
+}
+
 export interface RunResultsResponse {
   run: RunResource;
   points: ResponsePoint[];
@@ -121,7 +156,12 @@ export interface RunResultsResponse {
   response_hulls: ResponseHull[];
   prompt: string;
   model: string;
+  system_prompt?: string | null;
+  embedding_model: string;
   n: number;
+  costs: RunCostSummary;
+  chunk_size?: number | null;
+  chunk_overlap?: number | null;
 }
 
 export interface CreateRunPayload {
@@ -132,6 +172,10 @@ export interface CreateRunPayload {
   top_p?: number | null;
   seed?: number | null;
   max_tokens?: number | null;
+  chunk_size?: number | null;
+  chunk_overlap?: number | null;
+  system_prompt?: string | null;
+  embedding_model?: string;
   notes?: string | null;
 }
 

@@ -67,6 +67,7 @@ class OpenAIService:
         prompt: str,
         n: int,
         model: Optional[str] = None,
+        system_prompt: Optional[str] = None,
         temperature: Optional[float] = None,
         top_p: Optional[float] = None,
         seed: Optional[int] = None,
@@ -80,6 +81,8 @@ class OpenAIService:
         temp = temperature if temperature is not None else self._settings.default_temperature
         nucleus = top_p if top_p is not None else self._settings.default_top_p
 
+        sys_prompt = system_prompt.strip() if system_prompt else SYSTEM_PROMPT
+
         async def _call(index: int) -> ChatSample:
             call_seed = seed + index if seed is not None else None
             jitter = jitter_token or secrets.token_hex(4)
@@ -88,7 +91,7 @@ class OpenAIService:
             payload = dict(
                 model=chosen_model,
                 messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "system", "content": sys_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=temp,

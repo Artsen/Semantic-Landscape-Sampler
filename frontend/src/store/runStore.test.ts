@@ -1,4 +1,5 @@
 /**
+      chunk_overlap: 1,
  * Regression coverage for run store reducers and selectors.
  *
  * Verifies cluster palette generation, visibility toggles, selection helpers, and role filtering.
@@ -20,10 +21,13 @@ test("setResults hydrates palette and visibility", () => {
       prompt: "Test prompt",
       n: 3,
       model: "gpt-4.1-mini",
+      system_prompt: "Return a concise answer",
+      embedding_model: "text-embedding-3-large",
       temperature: 0.8,
       top_p: 1,
       seed: 42,
       max_tokens: 800,
+      chunk_overlap: 1,
       status: "completed",
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
@@ -32,7 +36,12 @@ test("setResults hydrates palette and visibility", () => {
     },
     prompt: "Test prompt",
     model: "gpt-4.1-mini",
+    system_prompt: "Return a concise answer",
+    chunk_overlap: 1,
+    embedding_model: "text-embedding-3-large",
     n: 3,
+    chunk_size: 3,
+    chunk_overlap: 1,
     clusters: [
       {
         label: 0,
@@ -99,6 +108,20 @@ test("setResults hydrates palette and visibility", () => {
         coords_2d: [-0.1, -0.3],
       },
     ],
+    segments: [],
+    segment_clusters: [],
+    segment_edges: [],
+    response_hulls: [],
+    costs: {
+      model: "gpt-4.1-mini",
+      embedding_model: "text-embedding-3-large",
+      completion_input_tokens: 0,
+      completion_output_tokens: 0,
+      completion_cost: 0,
+      embedding_tokens: 0,
+      embedding_cost: 0,
+      total_cost: 0,
+    },
   };
 
   useRunStore.getState().setResults(mockResults);
@@ -108,6 +131,8 @@ test("setResults hydrates palette and visibility", () => {
   expect(Object.keys(state.clusterVisibility).length).toBe(2);
   expect(state.clusterVisibility["0"]).toBe(true);
   expect(state.clusterVisibility["-1"]).toBe(true);
+  expect(state.chunkSize).toBe(3);
+  expect(state.chunkOverlap).toBe(1);
 });
 
 
@@ -118,6 +143,9 @@ test("setRunNotes updates results and history", () => {
     prompt: "Test prompt",
     n: 1,
     model: "gpt-4.1-mini",
+    system_prompt: "Return a concise answer",
+    chunk_overlap: 1,
+    embedding_model: "text-embedding-3-large",
     temperature: 0.8,
     top_p: 1,
     seed: 42,
@@ -139,7 +167,19 @@ test("setRunNotes updates results and history", () => {
       response_hulls: [],
       prompt: runResource.prompt,
       model: runResource.model,
+      system_prompt: runResource.system_prompt,
+      embedding_model: runResource.embedding_model,
       n: runResource.n,
+      costs: {
+        model: runResource.model,
+        embedding_model: runResource.embedding_model,
+        completion_input_tokens: 0,
+        completion_output_tokens: 0,
+        completion_cost: 0,
+        embedding_tokens: 0,
+        embedding_cost: 0,
+        total_cost: 0,
+      },
     },
     runHistory: [
       {
@@ -147,7 +187,11 @@ test("setRunNotes updates results and history", () => {
         prompt: runResource.prompt,
         n: runResource.n,
         model: runResource.model,
+        system_prompt: runResource.system_prompt,
+        embedding_model: runResource.embedding_model,
         temperature: runResource.temperature,
+        chunk_size: runResource.chunk_size,
+        chunk_overlap: runResource.chunk_overlap,
         top_p: runResource.top_p,
         seed: runResource.seed,
         max_tokens: runResource.max_tokens,

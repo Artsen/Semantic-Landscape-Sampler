@@ -37,14 +37,18 @@ Semantic Landscape Sampler fans a single question out across many LLM completion
 
 Semantic Landscape Sampler is built for rapid sense-making of large language model responses. Instead of skimming dozens of plain text completions, you can project them into a shared embedding space, inspect clusters, surface outliers, and drill into individual sentences. The project is intentionally split into a stateless API layer and a rich browser client so that analytics workloads, automation, or other frontends can reuse the same contracts.
 
-Recent UX improvement: the segment overlays (thread mesh, similarity edges, and response hulls) now share the exact same scaling pipeline as the rendered point cloud. Adjusting the point spread slider keeps every mesh aligned with the visible points, which makes it much easier to reason about relative distances while exploring segments.
+Recent updates:
+- Segment overlays (thread mesh, similarity edges, response hulls) now share the exact same scaling pipeline as the rendered point cloud, so point spread tweaks keep everything aligned.
+- Run controls let you tune segment chunk size and overlap directly from the UI alongside prompt/system message inputs, making it easier to steer segmentation without code changes.
+- Sequence-aware point colouring highlights completion order and segment progression so spatial patterns line up with chronology.
+
 
 ## Plain-English Tour
 
 Think of the app as building a map of ideas. Every answer (and even each sentence inside an answer) becomes a dot. Dots that land close are talking about similar things; dots that land far apart are covering different ideas. Here is the journey end-to-end without any jargon:
 
-1. **Collect the text you want to look at.** You pose one question and ask an LLM for N completions. You can also split each completion into smaller pieces—sentences, clauses, or discourse segments—so the map can show both whole answers and their ingredients.
-2. **Describe each piece with numbers.** Computers compare numbers, so each response/segment gets a long numeric profile that captures its meaning. We blend three ingredients: an OpenAI embedding (semantic meaning), a TF-IDF “word fingerprint,” and lightweight prompt-similarity/stats features. Put together, that blend is the item’s fingerprint.
+1. **Collect the text you want to look at.** You pose one question and ask an LLM for N completions. You can also split each completion into smaller pieces—sentences, clauses, or discourse segments—so the map can show both whole answers and their ingredients. Each run can also carry a custom system message if you want to steer tone or persona.
+2. **Describe each piece with numbers.** Computers compare numbers, so each response/segment gets a long numeric profile that captures its meaning. We blend three ingredients: an OpenAI embedding (semantic meaning), a TF-IDF “word fingerprint,” and lightweight prompt-similarity/stats features. Put together, that blend is the item’s fingerprint. You choose which OpenAI embedding model (large, small, Ada) drives this blend when you generate a run.
 3. **Squash the high-dimensional fingerprints into coordinates.** UMAP compresses those long vectors into just three numbers (x, y, z) for the 3D view and two numbers (x, y) for the flat map. The axes are not labeled “topic” or “sentiment”; they are simply directions that keep similar fingerprints near each other.
 4. **Persist coordinates, clusters, and overlays.** Each item stores both projections, outlier scores, and cluster metadata. A fixed random seed keeps layouts stable across runs so you can compare experiments.
 5. **Find structure and relationships.** HDBSCAN (with a KMeans fallback) groups nearby dots and computes probabilities. We also build similarity edges, parent/segment thread lines, and response hull outlines—all using the same scaling as the point positions.
@@ -58,19 +62,20 @@ If you remember only one thing: meaning lives in who is near whom. Axis labels a
 ### Backend
 - FastAPI + SQLModel service layer with async persistence to SQLite during local development.
 - OpenAI Chat Completions for generation (gpt-5-codex, gpt-4.1, or user-supplied models).
-- Embedding blend: OpenAI 	ext-embedding-3-large (small fallback), TF-IDF, prompt similarity, and lightweight statistics.
+- Embedding blend: OpenAI text-embedding-3-large (small fallback), TF-IDF, prompt similarity, and lightweight statistics.
 - Dimensionality reduction via deterministic UMAP for 3D and 2D projections (shared random state for reproducibility).
 - Clustering with HDBSCAN plus a KMeans fallback. Each cluster tracks membership probability, centroid similarity, keyword themes, silhouette, and outlier scores.
 - Response segmentation, optional discourse tagging, similarity graph construction, response hull computation, and parent thread stitching.
 - Clean JSON schemas via Pydantic for run configuration, results payloads, and exports.
+- Cost accounting and usage summaries via per-model pricing tables for completions and embeddings.
 
 ### Frontend
 - React + Vite + Tailwind + Zustand application scaffolded for fast iteration.
-- 
-eact-three-fiber + drei rendering of the point cloud, complete with hover tooltips, lasso selection, camera controls, Stats overlay, and density heatmaps.
+- react-three-fiber + drei rendering of the point cloud, complete with hover tooltips, lasso selection, camera controls, Stats overlay, and density heatmaps.
+- Sequence-aware colour palettes tint responses and segments by completion order, so spatial clusters carry timeline context.
 - Response vs segment modes, cluster legends, role filters, similarity edges, parent thread meshes, and convex hull overlays.
 - Detail drawer for metrics, raw text, embeddings, and parent response context.
-- Run history drawer, run notes editor, quick outlier selectors, and exports that mirror backend payloads (JSON and CSV).
+- Run history drawer, run metadata bar, notes editor, quick outlier selectors, and exports that mirror backend payloads (JSON and CSV).
 
 ## Architecture
 
@@ -83,15 +88,18 @@ backend/
     models/         # SQLite table declarations
     schemas/        # Pydantic response/input models
     services/       # Sampling, embedding, projection, clustering
+    utils/          # Tokenisation helpers and shared maths
   tests/            # Pytest suites with OpenAI fixtures and projection goldens
 frontend/
   src/
     components/     # Controls, scene, drawers, legends, overlays
     hooks/          # Run workflow orchestration
-    services/       # REST API client
-    store/          # Zustand store + tests
-    types/          # Shared API types
-  public/           # Static assets (if any)
+    services/       # REST API client helpers
+    store/          # Zustand store + selectors
+    types/          # Shared API types and Zod schemas
+    setupTests.ts   # Vitest + Testing Library config
+  package.json      # Scripts (dev, build, lint, test)
+  vite.config.ts    # Vite + React config
 .github/
   workflows/ci.yml  # Format, lint, and test gates for both stacks
 ```
@@ -109,8 +117,8 @@ frontend/
    ```bash
    cp .env.example .env
    ```
-2. Set at minimum OPENAI_API_KEY. You can also tune sampling defaults (DEFAULT_MODEL, DEFAULT_TEMPERATURE, etc.) and SQLite paths.
-3. Backend and frontend both read from .env at the project root; keep secrets out of version control.
+2. Set at minimum `OPENAI_API_KEY`. Optional overrides include `OPENAI_CHAT_MODEL`, `OPENAI_EMBEDDING_MODEL`, `OPENAI_EMBEDDING_FALLBACK_MODEL`, `ENABLE_DISCOURSE_TAGGING`, `SEGMENT_WORD_WINDOW`, `SEGMENT_WORD_OVERLAP`, and `PROJECTION_MIN_DIST`.
+3. Backend reads `.env` for FastAPI configuration. The frontend will proxy requests to `VITE_API_BASE_URL` when set (defaults to http://localhost:8000). Keep secrets out of version control.
 
 ## Backend Setup
 
@@ -154,20 +162,24 @@ By default Vite serves on http://localhost:5173 and proxies API calls to http://
 
 ### Controls Reference
 - **Prompt & System Message**: set the user prompt and optional system instructions (leave blank to use the default).
+- **Segment Chunk Size & Overlap**: choose how many words feed each window and how much the slices overlap before segmentation.
+- **Sampling Sliders (N / Temperature / Top-p)**: sweep how many completions to request and how adventurous they are.
+- **Seed & Max Tokens**: lock runs to deterministic seeds and override the completion cap when needed.
 - **Embedding Model**: choose which OpenAI embedding variant powers similarity (large vs. small vs. Ada).
-- **Point Spread**: rescales the projection while keeping segment meshes, similarity edges, and hulls perfectly aligned with visible points.
-- **Point Size**: adjusts rendered particle size (affects hover thresholds).
-- **Density Overlay**: toggles a heatmap computed in screen space.
-- **View Mode**: switch between 3D orbit controls and an orthographic 2D camera.
-- **Level Mode**: switch between response-level and segment-level clouds.
+- **Jitter Token**: optionally prepend a stable token to each prompt call to nudge diversity without changing the root prompt.
+- **Point Spread & Size**: rescale the projection and adjust particle size while keeping segment meshes aligned.
+- **View Mode & Level Mode**: switch between 3D/2D cameras and response/segment clouds.
+- **Density Overlay**: toggle a screen-space heatmap for dense regions.
 - **Cluster Legend**: hover to spotlight a cluster, click to toggle visibility.
-- **Role Filters** (segment mode): filter by assistant/system/user roles when discourse tagging is enabled.
-- **Similarity Edges**: visualise high-similarity pairs generated from segment embeddings.
-- **Parent Threads**: show the conversational mesh plus response hulls for context (uses the same scaling as the point cloud).
-- **Run Notes**: capture annotations and hypotheses for future reference.
+- **Role Filters** (segment mode): filter by discourse roles when tagging is enabled.
+- **Similarity Edges & Parent Threads**: visualise high-similarity pairs and response hull meshes that now share the same scaling maths.
+- **Run History Drawer**: reopen and duplicate stored runs (fetches `/run?limit=...` on demand).
+- **Quick Insights**: one-click selectors surface top outlier responses or segments for deeper inspection.
+- **Run Notes & Exports**: annotate the run, download matching JSON/CSV payloads, or jump straight into downstream analysis.
 
 ### Exploration Tips
 - Hover points to preview summary text and metadata.
+- Check the metadata bar for model, chunk, token, and cost badges while you compare runs.
 - Shift + drag to lasso select; selections drive the details panel.
 - Use the run history drawer to reopen prior experiments with stored parameters and notes.
 - Export JSON/CSV from the controls panel to analyse in notebooks or BI tools.
@@ -178,12 +190,12 @@ SQLite schema (simplified):
 
 | Table | Purpose |
 | --- | --- |
-| runs | Prompt, model, sampling configuration, status, notes. |
+| runs | Prompt, model, sampling configuration (chunk size/overlap), status, notes. |
 | responses | Raw chat completions and metadata (cluster label, centroid similarity, outlier score). |
 | response_segments | Sentence/discourse segments tied to parent responses. |
 | embeddings | Embedding vectors (responses and segments) for reproducibility. |
 | projections | UMAP/t-SNE coordinates in 2D and 3D. |
-| clusters | Cluster assignments and stats for responses and segments. |
+| clusters | Cluster assignments and stats for responses (segment cluster metrics live on response_segments). |
 | segment_edges | High-similarity edges between segments. |
 | response_hulls | Convex hull coordinates for each response (2D and 3D). |
 
@@ -193,6 +205,7 @@ Results are returned as a single JSON payload so the frontend can hydrate the sc
 
 | Method | Path | Description |
 | --- | --- | --- |
+| GET | /run | List recent runs for the history drawer (supports ?limit=). |
 | POST | /run | Create a run configuration (prompt, sampling params, optional notes). |
 | POST | /run/{id}/sample | Execute sampling, segmentation, embedding, projection, clustering, persistence. |
 | GET | /run/{id}/results | Fetch the full visualisation payload (responses, segments, clusters, edges, hulls). |
@@ -229,7 +242,6 @@ GitHub Actions (.github/workflows/ci.yml) runs formatters, linters, and unit tes
 ## Seed Sample Data
 
 With both services running:
-
 ```bash
 curl -X POST http://localhost:8000/run \
   -H "Content-Type: application/json" \
@@ -237,7 +249,6 @@ curl -X POST http://localhost:8000/run \
 ```
 
 Note the run_id from the response, then:
-
 ```bash
 curl -X POST http://localhost:8000/run/<run_id>/sample
 curl http://localhost:8000/run/<run_id>/results | jq
@@ -250,7 +261,7 @@ These payloads can be imported directly into the frontend store for demos or reg
 The picture on screen is the end of a repeatable pipeline that turns raw completions into blended feature vectors, projects them with UMAP, and then rehydrates the geometry in the browser. Here is the full loop:
 
 1. **Generate the text you want to map.** One prompt is fanned out to `n` chat completions (pick any supported GPT family). Each completion is optionally segmented into discourse-aware chunks (sentences/clauses) so you can explore both whole responses and their fragments. Every run and artifact is written to SQLite for reproducibility.
-2. **Blend multiple feature views into a single vector.** For every response/segment we concatenate: (a) an OpenAI embedding (`text-embedding-3-large`, with a small-model fallback), (b) TF‑IDF weights over the corpus, (c) prompt-similarity features (e.g., cosine distance to the original prompt or seed answer), and (d) lightweight scalar stats such as length. This gives us one high-dimensional feature vector per item.
+2. **Blend multiple feature views into a single vector.** For every response/segment we concatenate: (a) an OpenAI embedding (`text-embedding-3-large`, with a small-model fallback), (b) TF-IDF weights over the corpus, (c) prompt-similarity features (e.g., cosine distance to the original prompt or seed answer), and (d) lightweight scalar stats such as length. This gives us one high-dimensional feature vector per item.
 3. **Project twice with deterministic UMAP.** Using a fixed random seed, we run UMAP two times over the same blended matrix—one projection targets 3D coordinates for the point cloud, the other targets 2D for exports and minimaps. UMAP preserves neighborhood relationships; the three axes are latent directions, not hand-labeled topics.
 4. **Persist coordinates and metadata.** Each item stores `coords_3d = [x, y, z]` and `coords_2d = [x, y]`, plus embedding hashes, cluster labels, and outlier scores. Because the seed is shared, repeated runs over identical data remain stable.
 5. **Cluster for structure.** HDBSCAN labels dense regions, emits soft membership probabilities, and computes outlier scores; if it cannot converge, a KMeans fallback guarantees a partition. Cluster centroids and keyword themes feed the legend and detail drawers.
@@ -280,7 +291,8 @@ Happy sampling!
 ```mermaid
 flowchart TD
     %% User interaction
-    U["User adjusts parameters\n& clicks Generate"] --> CP["ControlsPanel
+    U["User adjusts parameters
+& clicks Generate"] --> CP["ControlsPanel
 (UI events)"]
     CP --> RS["Zustand runStore
 (state mutations)"]
@@ -338,6 +350,15 @@ probabilities + outliers"]
     Components --> ControlsPanel
     Components --> DetailsPanel["PointDetailsPanel"]
     Components --> Notes["RunNotesEditor"]
+    Components --> MetaBar["RunMetadataBar"]
+    Components --> History["RunHistoryDrawer"]
+
+    %% Run history fetch
+    History -->|"GET /run?limit="| API_List["FastAPI /run (list)"]
+    API_List --> RunsSvcList["list_recent_runs"]
+    RunsSvcList --> DB
+    History --> RS
+    History --> WorkflowHook
 
     %% Scene rendering
     subgraph Scene

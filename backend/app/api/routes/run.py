@@ -1,5 +1,6 @@
 """Run management endpoints for sampling and retrieving semantic landscapes.
 
+
 Endpoints:
     create_run(payload, session): Persist a sampling configuration and return its identifier.
     sample_run(run_id, sample_request, session): Fan out chat completions, embeddings, clustering, and persistence.
@@ -27,6 +28,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Response, status
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app.core.config import get_settings
 from app.db.session import get_session
 from app.models import (
     Cluster,
@@ -51,8 +53,13 @@ from app.schemas import (
     SegmentClusterSummary,
     SegmentEdge as SegmentEdgeSchema,
     SegmentPoint, UsageInfo, RunSummary,
+    RunCostSummary,
 )
 from app.services.runs import RunService, load_run_with_details, list_recent_runs
+from app.services.pricing import get_completion_pricing, get_embedding_pricing
+from app.utils.tokenization import count_tokens
+
+_SETTINGS = get_settings()
 
 router = APIRouter(prefix="/run", tags=["runs"])
 
@@ -86,6 +93,16 @@ async def update_run(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     return _to_run_resource(run)
+
+@router.get("/{run_id}", response_model=RunResource)
+async def get_run(run_id: UUID, session: AsyncSession = Depends(get_session)) -> RunResource:
+    run = await session.get(Run, run_id)
+    if not run:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
+    return _to_run_resource(run)
+
+
+
 
 
 @router.post("/{run_id}/sample", response_model=RunResource)
@@ -152,11 +169,22 @@ async def export_csv(run_id: UUID, session: AsyncSession = Depends(get_session))
     )
 
 def _to_run_resource(run: Run) -> RunResource:
+    metadata = None
+    if run.progress_metadata:
+        try:
+            metadata = json.loads(run.progress_metadata)
+        except json.JSONDecodeError:
+            metadata = None
+
     return RunResource(
         id=run.id,
         prompt=run.prompt,
         n=run.n,
         model=run.model,
+        chunk_size=run.chunk_size,
+        chunk_overlap=run.chunk_overlap,
+        system_prompt=run.system_prompt,
+        embedding_model=run.embedding_model or _SETTINGS.openai_embedding_model,
         temperature=run.temperature,
         top_p=run.top_p,
         seed=run.seed,
@@ -166,6 +194,10 @@ def _to_run_resource(run: Run) -> RunResource:
         updated_at=run.updated_at,
         error_message=run.error_message,
         notes=run.notes,
+        progress_stage=run.progress_stage,
+        progress_message=run.progress_message,
+        progress_percent=run.progress_percent,
+        progress_metadata=metadata,
     )
 
 
@@ -179,6 +211,21 @@ def _build_results(
     segment_edges: list[SegmentEdgeModel],
     hulls: list[ResponseHullModel],
 ) -> RunResultsResponse:
+    embedding_model = run.embedding_model or _SETTINGS.openai_embedding_model
+    completion_pricing = get_completion_pricing(run.model)
+    embedding_pricing = get_embedding_pricing(embedding_model)
+
+    total_prompt_tokens = 0
+    total_completion_tokens = 0
+    total_completion_cost = 0.0
+    total_embedding_tokens = 0
+    total_embedding_cost = 0.0
+
+    prompt_embedding_tokens = count_tokens(run.prompt, embedding_model)
+    total_embedding_tokens += prompt_embedding_tokens
+    if embedding_pricing:
+        total_embedding_cost += prompt_embedding_tokens * embedding_pricing.input_cost
+
     proj_map: dict[tuple[UUID, int], Projection] = {}
     for projection in projections:
         proj_map[(projection.response_id, projection.dim)] = projection
@@ -249,6 +296,13 @@ def _build_results(
         cluster_label = int(segment.cluster_label) if segment.cluster_label is not None else None
         if cluster_label is not None:
             segments_by_label[cluster_label].append(segment)
+        segment_tokens = segment.tokens if segment.tokens is not None else count_tokens(segment.text, embedding_model)
+        embedding_tokens = segment_tokens or 0
+        total_embedding_tokens += embedding_tokens
+        embedding_cost = None
+        if embedding_pricing:
+            embedding_cost = embedding_tokens * embedding_pricing.input_cost
+            total_embedding_cost += embedding_cost
         segment_points.append(
             SegmentPoint(
                 id=segment.id,
@@ -257,7 +311,9 @@ def _build_results(
                 position=segment.position,
                 text=segment.text,
                 role=segment.role,
-                tokens=segment.tokens,
+                tokens=segment_tokens,
+                embedding_tokens=embedding_tokens,
+                embedding_cost=embedding_cost,
                 prompt_similarity=float(segment.prompt_similarity) if segment.prompt_similarity is not None else None,
                 silhouette_score=float(segment.silhouette_score) if segment.silhouette_score is not None else None,
                 cluster=cluster_label,
@@ -355,6 +411,27 @@ def _build_results(
         if outlier_score is None and cluster_info and cluster_info.label == -1:
             outlier_score = 1.0
 
+        prompt_tokens = int(usage.get("prompt_tokens") or 0)
+        completion_tokens = int(usage.get("completion_tokens") or 0)
+        total_prompt_tokens += prompt_tokens
+        total_completion_tokens += completion_tokens
+        completion_cost = None
+        if completion_pricing:
+            completion_cost = (
+                prompt_tokens * completion_pricing.input_cost
+                + completion_tokens * completion_pricing.output_cost
+            )
+            total_completion_cost += completion_cost
+
+        embedding_tokens = count_tokens(full_text, embedding_model)
+        total_embedding_tokens += embedding_tokens
+        embedding_cost = None
+        if embedding_pricing:
+            embedding_cost = embedding_tokens * embedding_pricing.input_cost
+            total_embedding_cost += embedding_cost
+
+        total_cost = (completion_cost or 0.0) + (embedding_cost or 0.0)
+
         points.append(
             ResponsePoint(
                 id=response.id,
@@ -368,10 +445,30 @@ def _build_results(
                 probability=cluster_info.probability if cluster_info else None,
                 similarity_to_centroid=cluster_info.similarity if cluster_info else None,
                 outlier_score=float(outlier_score) if outlier_score is not None else None,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                embedding_tokens=embedding_tokens,
+                completion_cost=completion_cost,
+                embedding_cost=embedding_cost,
+                total_cost=total_cost,
                 coords_3d=coords3d,
                 coords_2d=coords2d,
             )
         )
+
+    total_embedding_tokens = int(total_embedding_tokens)
+    total_prompt_tokens = int(total_prompt_tokens)
+    total_completion_tokens = int(total_completion_tokens)
+    cost_summary = RunCostSummary(
+        model=run.model,
+        embedding_model=embedding_model,
+        completion_input_tokens=total_prompt_tokens,
+        completion_output_tokens=total_completion_tokens,
+        completion_cost=float(total_completion_cost),
+        embedding_tokens=total_embedding_tokens,
+        embedding_cost=float(total_embedding_cost),
+        total_cost=float(total_completion_cost + total_embedding_cost),
+    )
 
     return RunResultsResponse(
         run=_to_run_resource(run),
@@ -383,7 +480,12 @@ def _build_results(
         response_hulls=response_hulls,
         prompt=run.prompt,
         model=run.model,
+        system_prompt=run.system_prompt,
+        embedding_model=run.embedding_model or _SETTINGS.openai_embedding_model,
         n=run.n,
+        costs=cost_summary,
+        chunk_size=run.chunk_size,
+        chunk_overlap=run.chunk_overlap,
     )
 
 
@@ -459,8 +561,3 @@ def _extract_segment_keywords(
         keywords_by_label[label] = keywords
 
     return keywords_by_label
-
-
-
-
-

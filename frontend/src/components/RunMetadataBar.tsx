@@ -19,6 +19,8 @@ export const RunMetadataBar = memo(function RunMetadataBar() {
     }
     const items: Array<{ label: string; value: string }> = [
       { label: "Model", value: run.model },
+      { label: "Embedding", value: run.embedding_model },
+      { label: "Chunk", value: `${run.chunk_size ?? 3} w` },
       { label: "Temp", value: run.temperature.toFixed(2) },
     ];
     if (run.top_p != null) {
@@ -32,6 +34,9 @@ export const RunMetadataBar = memo(function RunMetadataBar() {
     }
     items.push({ label: "Samples", value: String(results?.n ?? run.n) });
     items.push({ label: "Status", value: run.status });
+    if (results?.costs) {
+      items.push({ label: "Total cost", value: `$${results.costs.total_cost.toFixed(6)}` });
+    }
     return items;
   }, [run, results]);
 
@@ -54,4 +59,3 @@ export const RunMetadataBar = memo(function RunMetadataBar() {
     </div>
   );
 });
-
