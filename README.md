@@ -387,3 +387,282 @@ feedback"]
 (localStorage via zustand/persist)"]
     UIState --> ControlsPanel
 ```
+
+## Data model (ER diagram)
+```marmaid
+erDiagram
+    RUNS ||--o{ RESPONSES : "has"
+    RESPONSES ||--o{ RESPONSE_SEGMENTS : "has"
+    RUNS ||--o{ EMBEDDINGS : "records"
+    RUNS ||--o{ PROJECTIONS : "records"
+    RUNS ||--o{ CLUSTERS : "yields"
+    RUNS ||--o{ SEGMENT_EDGES : "derives"
+    RESPONSES ||--o{ RESPONSE_HULLS : "outlines"
+    RESPONSES }o--|| CLUSTERS : "cluster_label (0..1)"
+    RESPONSE_SEGMENTS }o--|| CLUSTERS : "segment cluster (0..1)"
+
+    RUNS {
+      uuid id PK
+      text prompt
+      text system_prompt
+      text model
+      int n
+      float temperature
+      float top_p
+      int seed
+      int chunk_size
+      int chunk_overlap
+      text status
+      text notes
+      datetime created_at
+      float total_tokens
+      float total_cost
+    }
+
+    RESPONSES {
+      uuid id PK
+      uuid run_id FK
+      int index_in_run
+      text role
+      text content
+      int token_count
+      float cost
+      int cluster_label
+      float centroid_similarity
+      float outlier_score
+    }
+
+    RESPONSE_SEGMENTS {
+      uuid id PK
+      uuid run_id FK
+      uuid response_id FK
+      int seq_index
+      int start_char
+      int end_char
+      text text
+      int cluster_label
+      float membership_prob
+      float outlier_score
+    }
+
+    EMBEDDINGS {
+      uuid id PK
+      uuid run_id FK
+      text item_type       
+      uuid item_id FK
+      text model
+      int dims
+      text vector_hash
+      blob vector
+    }
+
+    PROJECTIONS {
+      uuid id PK
+      uuid run_id FK
+      text item_type       
+      uuid item_id FK
+      text method          
+      int dim              
+      float x
+      float y
+      float z
+      int random_seed
+      json params
+    }
+
+    CLUSTERS {
+      uuid id PK
+      uuid run_id FK
+      int label
+      text method          
+      int size
+      float silhouette
+      float prob_mean
+      float prob_min
+      float prob_max
+      blob centroid_vec
+      json keywords
+    }
+
+    SEGMENT_EDGES {
+      uuid id PK
+      uuid run_id FK
+      uuid from_segment_id FK
+      uuid to_segment_id FK
+      float weight         
+      int k_rank
+    }
+
+    RESPONSE_HULLS {
+      uuid id PK
+      uuid run_id FK
+      uuid response_id FK
+      int dim
+      json points
+    }
+```
+
+## System architecture (class diagram)
+```marmaid
+classDiagram
+direction LR
+
+class ApiRouter {
+  +listRuns()
+  +createRun(cfg)
+  +sampleRun(runId)
+  +getResults(runId)
+  +exportJSON(runId)
+  +exportCSV(runId)
+  +updateRun(runId, patch)
+}
+
+class RunsService {
+  +createRun(cfg)
+  +sampleRun(runId)
+  +getResults(runId)
+  +exportJSON(runId)
+  +exportCSV(runId)
+  +updateRun(runId, patch)
+}
+
+class Segmenter {
+  +splitSentences(text)
+  +discourseChunks(text, chunkSize, overlap)
+}
+
+class Embedder {
+  +buildMatrix(items)
+  +openAIEmbeddings(texts, model)
+  +tfidfFeatures(items)
+  +promptStats(items)
+}
+
+class ProjectorUMAP {
+  +project2D(matrix, seed, params)
+  +project3D(matrix, seed, params)
+}
+
+class Clusterer {
+  +hdbscan(matrix)
+  +kmeans(matrix, k)
+}
+
+class GraphBuilder {
+  +knnEdges(matrix, k)
+}
+
+class HullBuilder {
+  +convexHullsByResponse(coords)
+}
+
+class SqliteStore {
+  +saveRun(run)
+  +saveArtifacts(...)
+  +loadResults(runId)
+}
+
+class OpenAIChat {
+  +completions(prompt, n, model, seed, temp, topP, maxTokens)
+}
+
+class OpenAIEmbedAPI {
+  +embed(texts, model)
+}
+
+class ApiClient {
+  +listRuns()
+  +createRun(cfg)
+  +sampleRun(runId)
+  +getResults(runId)
+  +exportJSON(runId)
+  +exportCSV(runId)
+  +updateRun(runId, patch)
+}
+
+class RunStore {
+  +state
+  +selectors
+  +actions
+}
+
+class ControlsPanel
+class Scene3D
+class Legends
+class Overlays
+class DetailDrawer
+class RunHistoryDrawer
+
+%% Relationships
+ApiRouter --> RunsService
+RunsService --> Segmenter
+RunsService --> Embedder
+RunsService --> ProjectorUMAP
+RunsService --> Clusterer
+RunsService --> GraphBuilder
+RunsService --> HullBuilder
+RunsService --> SqliteStore
+
+Embedder --> OpenAIEmbedAPI
+RunsService --> OpenAIChat
+
+ApiClient --> ApiRouter
+RunStore --> ApiClient
+ControlsPanel --> RunStore
+RunHistoryDrawer --> RunStore
+Scene3D <-- RunStore
+Legends <-- RunStore
+Overlays <-- RunStore
+DetailDrawer <-- RunStore
+```
+
+## Run lifecycle (sequence)
+```marmaid
+sequenceDiagram
+  autonumber
+  actor User
+  participant UI as ControlsPanel (UI)
+  participant Store as RunStore (Zustand)
+  participant API as API Client
+  participant BE as FastAPI Router
+  participant Svc as RunsService
+  participant OAIC as OpenAI Chat
+  participant OAIE as OpenAI Embeddings
+  participant DB as SQLite
+
+  User->>UI: Set prompt + params, click Generate
+  UI->>Store: mutate(runConfig)
+  Store->>API: POST /run
+  API->>BE: /run
+  BE->>Svc: create_run(cfg)
+  Svc->>DB: insert RUNS
+  DB-->>Svc: run_id
+  Svc-->>BE: run_id
+  BE-->>API: run_id
+  API-->>Store: run_id
+
+  Store->>API: POST /run/{id}/sample
+  API->>BE: /run/{id}/sample
+  BE->>Svc: sample_run(id)
+
+  Svc->>OAIC: n chat completions
+  OAIC-->>Svc: responses
+  Svc->>Svc: segmentation (sentences/discourse)
+  Svc->>OAIE: embed texts (responses + segments)
+  OAIE-->>Svc: vectors
+  Svc->>Svc: blend (OpenAI + TF-IDF + stats)
+  Svc->>Svc: UMAP 3D + 2D (seeded)
+  Svc->>Svc: HDBSCAN (+KMeans fallback)
+  Svc->>Svc: kNN edges + convex hulls
+  Svc->>DB: persist responses/segments/embeddings/ projections/clusters/edges/hulls
+
+  Store->>API: GET /run/{id}/results
+  API->>BE: /run/{id}/results
+  BE->>Svc: get_results(id)
+  Svc->>DB: fetch full payload
+  DB-->>Svc: rows
+  Svc-->>BE: JSON (coords, clusters, edges, hulls, text)
+  BE-->>API: JSON
+  API-->>Store: hydrate
+  Store-->>UI: render Scene3D + overlays + drawers
+```
