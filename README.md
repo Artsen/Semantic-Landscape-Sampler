@@ -389,7 +389,7 @@ feedback"]
 ```
 
 ## Data model (ER diagram)
-```marmaid
+```mermaid
 erDiagram
     RUNS ||--o{ RESPONSES : "has"
     RESPONSES ||--o{ RESPONSE_SEGMENTS : "has"
@@ -503,7 +503,7 @@ erDiagram
 ```
 
 ## System architecture (class diagram)
-```marmaid
+```mermaid
 classDiagram
 direction LR
 
@@ -617,7 +617,7 @@ DetailDrawer <-- RunStore
 ```
 
 ## Run lifecycle (sequence)
-```marmaid
+```mermaid
 sequenceDiagram
   autonumber
   actor User
@@ -665,4 +665,4 @@ sequenceDiagram
   BE-->>API: JSON
   API-->>Store: hydrate
   Store-->>UI: render Scene3D + overlays + drawers
-```
+  ```
