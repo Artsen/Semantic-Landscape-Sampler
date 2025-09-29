@@ -136,7 +136,7 @@ source .venv/bin/activate
 uvicorn app.main:app --reload --port 8000
 ```
 
-The backend automatically initialises the SQLite schema on first run. If you upgrade from an older database image and encounter missing columns (for example, notes), delete backend/data/semantic_sampler.db or run the migration snippet in AGENTS.md.
+The backend automatically initialises the SQLite schema on first run. If you upgrade from an older database image and encounter missing columns (for example, notes), delete backend/data/semantic_sampler.db.
 
 ## Frontend Setup
 
@@ -277,7 +277,7 @@ If you want to tune the layout, play with the UMAP parameters in the backend con
 
 - Integrate pnpm into the CLI image so Vitest can run locally and in CI without manual setup.
 - Publish OpenAI mocking recipes for CI in the onboarding docs.
-- Layer in model comparison overlays and richer topic labelling (see AGENTS.md).
+- Layer in model comparison overlays and richer topic labelling.
 - Add camera bookmarks and saved viewpoints per run.
 
 ## Contributing
@@ -666,3 +666,4 @@ sequenceDiagram
   API-->>Store: hydrate
   Store-->>UI: render Scene3D + overlays + drawers
   ```
+
