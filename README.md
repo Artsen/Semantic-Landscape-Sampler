@@ -1,4 +1,4 @@
-# Semantic Landscape Sampler
+# Semantic Landscape Sampler (SLS)
 
 
 [![Video Overview](./semantic-landscape-sampler.png)](./2025-09-27_17-46-43.mp4)
@@ -666,4 +666,5 @@ sequenceDiagram
   API-->>Store: hydrate
   Store-->>UI: render Scene3D + overlays + drawers
   ```
+
 
