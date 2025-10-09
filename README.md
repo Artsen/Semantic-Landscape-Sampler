@@ -68,30 +68,29 @@ If you remember only one thing: meaning lives in who is near whom. Axis labels a
 
 ```text
 .
-+-- AGENTS.md                     # Mission brief and agent tasking
 +-- README.md                     # This guide
 +-- backend/                      # FastAPI + SQLModel backend
-¦   +-- app/
-¦   ¦   +-- api/                  # FastAPI routers
-¦   ¦   +-- core/                 # Settings
-¦   ¦   +-- db/                   # Engine + migrations
-¦   ¦   +-- models/               # SQLModel tables (runs, segments, cache, ANN, provenance)
-¦   ¦   +-- schemas/              # Pydantic response/request models
-¦   ¦   +-- services/             # Sampling, embeddings, projection, ANN, exports
-¦   ¦   +-- utils/                # Text normalisation, token counting, pricing helpers
-¦   +-- data/                     # SQLite db + persisted ANN indexes
-¦   +-- tests/                    # Pytest suite with OpenAI mocks & golden files
-¦   +-- requirements.txt          # Backend dependencies
-¦   +-- pyproject.toml            # Ruff/Black tooling config
+Â¦   +-- app/
+Â¦   Â¦   +-- api/                  # FastAPI routers
+Â¦   Â¦   +-- core/                 # Settings
+Â¦   Â¦   +-- db/                   # Engine + migrations
+Â¦   Â¦   +-- models/               # SQLModel tables (runs, segments, cache, ANN, provenance)
+Â¦   Â¦   +-- schemas/              # Pydantic response/request models
+Â¦   Â¦   +-- services/             # Sampling, embeddings, projection, ANN, exports
+Â¦   Â¦   +-- utils/                # Text normalisation, token counting, pricing helpers
+Â¦   +-- data/                     # SQLite db + persisted ANN indexes
+Â¦   +-- tests/                    # Pytest suite with OpenAI mocks & golden files
+Â¦   +-- requirements.txt          # Backend dependencies
+Â¦   +-- pyproject.toml            # Ruff/Black tooling config
 +-- frontend/                     # React + Vite + Tailwind client
-¦   +-- src/
-¦   ¦   +-- components/           # Controls, scene, panels, legends, history drawer
-¦   ¦   +-- hooks/                # useRunWorkflow, segment context fetching
-¦   ¦   +-- services/             # REST client wrapped with zod schemas
-¦   ¦   +-- store/                # Zustand store + tests
-¦   ¦   +-- types/                # Shared run/segment types mirroring backend
-¦   +-- package.json              # Frontend dependencies & scripts
-¦   +-- pnpm-lock.yaml            # Locked dependency graph
+Â¦   +-- src/
+Â¦   Â¦   +-- components/           # Controls, scene, panels, legends, history drawer
+Â¦   Â¦   +-- hooks/                # useRunWorkflow, segment context fetching
+Â¦   Â¦   +-- services/             # REST client wrapped with zod schemas
+Â¦   Â¦   +-- store/                # Zustand store + tests
+Â¦   Â¦   +-- types/                # Shared run/segment types mirroring backend
+Â¦   +-- package.json              # Frontend dependencies & scripts
+Â¦   +-- pnpm-lock.yaml            # Locked dependency graph
 +-- CHANGELOG.md                  # Release notes
 +-- CONTRIBUTING.md               # Contribution guidelines
 +-- CODE_OF_CONDUCT.md            # Community expectations
@@ -812,3 +811,4 @@ sequenceDiagram
     API-->>Store: download ready
     Store-->>User: Save file
 ```
+
