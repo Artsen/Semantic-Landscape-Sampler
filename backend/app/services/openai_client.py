@@ -43,6 +43,8 @@ class EmbeddingBatch:
     vectors: list[list[float]]
     model: str
     dim: int
+    model_revision: str | None = None
+    provider: str = "openai"
 
 
 class OpenAIService:
@@ -141,6 +143,7 @@ class OpenAIService:
         chosen_model = model or self._settings.openai_embedding_model
         vectors: list[list[float]] = []
         dim = 0
+        model_revision: str | None = None
 
         for start in range(0, len(docs), _EMBED_BATCH_MAX):
             chunk = docs[start : start + _EMBED_BATCH_MAX]
@@ -154,8 +157,17 @@ class OpenAIService:
             vectors.extend(chunk_vectors)
             if not dim and chunk_vectors:
                 dim = len(chunk_vectors[0])
+            response_model = getattr(response, "model", None)
+            if response_model:
+                model_revision = response_model
 
-        return EmbeddingBatch(vectors=vectors, model=chosen_model, dim=dim)
+        return EmbeddingBatch(
+            vectors=vectors,
+            model=chosen_model,
+            dim=dim,
+            model_revision=model_revision,
+            provider="openai",
+        )
 
     async def discourse_tag_segments(
         self,

@@ -32,9 +32,21 @@ class Settings(BaseSettings):
     segment_word_window: int = 3
     segment_word_overlap: int = 1
     projection_min_dist: float = 0.25
+    embedding_preproc_version: str = "norm-nfkc-v1"
+    umap_default_n_neighbors: int = 30
+    umap_default_min_dist: float = 0.3
+    umap_default_metric: str = "cosine"
+    umap_default_seed: int = 42
+    default_env_label: str | None = None
+    ann_index_dir: str = "./data/indexes"
+    cluster_default_algo: str = "hdbscan"
+    hdbscan_default_min_cluster_size: int = 30
+    hdbscan_default_min_samples: int = 5
 
 
 @lru_cache()
 def get_settings() -> Settings:
     return Settings()
+
+
 

@@ -51,6 +51,10 @@ class SegmentDraft:
     cluster_similarity: float | None = None
     outlier_score: float | None = None
     silhouette_score: float | None = None
+    text_hash: str | None = None
+    is_cached: bool = False
+    is_duplicate: bool = False
+    simhash64: int | None = None
 
 
 def split_into_segments(text: str) -> list[str]:
@@ -144,4 +148,3 @@ def flatten_drafts(collections: Iterable[list[SegmentDraft]]) -> list[SegmentDra
     for items in collections:
         flattened.extend(items)
     return flattened
-

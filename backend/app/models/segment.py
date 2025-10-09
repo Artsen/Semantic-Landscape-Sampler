@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID, uuid4
 
-from sqlalchemy import Column, LargeBinary
+from sqlalchemy import Column, LargeBinary, BigInteger
 from sqlmodel import Field, SQLModel
 
 
@@ -30,11 +30,16 @@ class ResponseSegment(SQLModel, table=True):
     cluster_similarity: Optional[float] = None
     outlier_score: Optional[float] = None
     embedding_dim: Optional[int] = None
-    embedding_vector: Optional[bytes] = Field(default=None, sa_column=Column(LargeBinary))
+    embedding_vector: Optional[bytes] = Field(
+        default=None, sa_column=Column(LargeBinary)
+    )
     coord_x: float = Field(default=0.0)
     coord_y: float = Field(default=0.0)
     coord_z: float = Field(default=0.0)
     coord2_x: float = Field(default=0.0)
     coord2_y: float = Field(default=0.0)
+    text_hash: Optional[str] = Field(default=None, index=True)
+    is_cached: bool = Field(default=False)
+    is_duplicate: bool = Field(default=False)
+    simhash64: Optional[int] = Field(default=None, sa_column=Column(BigInteger))
     created_at: datetime = Field(default_factory=datetime.utcnow)
-
