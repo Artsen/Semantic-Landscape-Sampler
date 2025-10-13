@@ -1,0 +1,965 @@
+/**
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ * Zustand store describing application state for prompts, results, and visualisation toggles.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ */
+import { create } from "zustand";
+import { persist } from "zustand/middleware";
+import { fetchRunGraph, fetchProjectionVariant, recomputeClusters as recomputeClustersApi } from "@/services/api";
+const CHUNK_SIZE_MIN = 2;
+const CHUNK_SIZE_MAX = 200;
+const GRAPH_K_MIN = 5;
+const GRAPH_K_MAX = 40;
+const DEFAULT_GRAPH_K = 15;
+const DEFAULT_GRAPH_THRESHOLD = 0.35;
+const UMAP_PRESETS = {
+    tight: { n_neighbors: 15, min_dist: 0.05, metric: "cosine" },
+    balanced: { n_neighbors: 30, min_dist: 0.3, metric: "cosine" },
+    global: { n_neighbors: 100, min_dist: 0.6, metric: "cosine" },
+};
+const VIEWPORT_EPSILON = 1e-3;
+const inferUmapPreset = (n, minDist, metric) => {
+    const tolerance = 1e-3;
+    for (const [key, preset] of Object.entries(UMAP_PRESETS)) {
+        if (Math.abs(preset.n_neighbors - n) < 1e-9 &&
+            Math.abs(preset.min_dist - minDist) < tolerance &&
+            preset.metric === metric) {
+            return key;
+        }
+    }
+    return "custom";
+};
+const clampChunkSize = (value, fallback) => {
+    const source = typeof value === "number" && Number.isFinite(value)
+        ? Math.round(value)
+        : Math.round(fallback);
+    return Math.min(CHUNK_SIZE_MAX, Math.max(CHUNK_SIZE_MIN, source));
+};
+const clampChunkOverlap = (value, chunkSize) => {
+    const maxOverlap = Math.max(0, Math.round(chunkSize) - 1);
+    if (maxOverlap <= 0) {
+        return 0;
+    }
+    const source = typeof value === "number" && Number.isFinite(value) ? Math.round(value) : 0;
+    return Math.min(maxOverlap, Math.max(0, source));
+};
+const defaultState = {
+    prompt: "How will climate change transform urban living in the next decade?",
+    systemPrompt: "Return a concise answer with reasoning steps suppressed; vary framing and examples.",
+    n: 40,
+    temperature: 0.9,
+    topP: 1,
+    model: "gpt-4.1-mini",
+    seed: null,
+    maxTokens: 800,
+    embeddingModel: "text-embedding-3-large",
+    useCache: true,
+    clusterAlgo: "hdbscan",
+    hdbscanMinClusterSize: 30,
+    hdbscanMinSamples: 5,
+    clusterMetrics: null,
+    isRecomputingClusters: false,
+    preprocVersion: "norm-nfkc-v1",
+    chunkSize: 3,
+    chunkOverlap: 1,
+    umapNNeighbors: UMAP_PRESETS.balanced.n_neighbors,
+    umapMinDist: UMAP_PRESETS.balanced.min_dist,
+    umapMetric: UMAP_PRESETS.balanced.metric,
+    umapSeed: 42,
+    umapPreset: "balanced",
+    viewMode: "3d",
+    levelMode: "responses",
+    pointSize: 0.06,
+    spreadFactor: 1.4,
+    showDensity: false,
+    showEdges: true,
+    showParentThreads: true,
+    exportIncludeProvenance: false,
+    exportFormat: "json",
+    simplifyEdges: false,
+    showNeighborSpokes: false,
+    graphEdgeK: DEFAULT_GRAPH_K,
+    graphEdgeThreshold: DEFAULT_GRAPH_THRESHOLD,
+    showDuplicatesOnly: false,
+    selectedPointIds: [],
+    selectedSegmentIds: [],
+    clusterVisibility: {},
+    clusterPalette: {},
+    viewportBounds: null,
+    roleVisibility: {},
+    hoveredClusterLabel: null,
+    progressStage: null,
+    progressMessage: null,
+    progressPercent: null,
+    progressMetadata: null,
+};
+export const useRunStore = create()(persist((set, get) => ({
+    ...defaultState,
+    projectionMethod: "umap",
+    projectionVariants: {},
+    projectionWarnings: [],
+    isProjectionLoading: false,
+    projectionError: null,
+    jitterToken: null,
+    chunkOverlap: defaultState.chunkOverlap ?? 1,
+    isHistoryOpen: false,
+    isGenerating: false,
+    currentRunId: undefined,
+    results: undefined,
+    hoveredPointId: undefined,
+    hoveredSegmentId: undefined,
+    focusedResponseId: undefined,
+    progressStage: null,
+    progressMessage: null,
+    progressPercent: null,
+    progressMetadata: null,
+    runHistory: [],
+    runMetrics: null,
+    segmentEdges: [],
+    segmentGraphMode: "full",
+    segmentGraphAutoSimplified: false,
+    segmentGraphLoading: false,
+    segmentGraphError: null,
+    exportIncludeProvenance: false,
+    viewportBounds: null,
+    setPrompt: (value) => set({ prompt: value }),
+    setSystemPrompt: (value) => set({ systemPrompt: value }),
+    setN: (value) => set((state) => {
+        const nextN = Math.max(1, Math.round(value));
+        const maxNeighbors = Math.max(2, Math.min(200, nextN - 1));
+        const minNeighbors = maxNeighbors < 5 ? maxNeighbors : 5;
+        const clampedNeighbors = Math.min(Math.max(state.umapNNeighbors, minNeighbors), maxNeighbors);
+        return {
+            n: nextN,
+            umapNNeighbors: clampedNeighbors,
+            umapPreset: inferUmapPreset(clampedNeighbors, state.umapMinDist, state.umapMetric),
+        };
+    }),
+    setTemperature: (value) => set({ temperature: value }),
+    setTopP: (value) => set({ topP: value }),
+    setModel: (value) => set({ model: value }),
+    setUseCache: (value) => set({ useCache: value }),
+    setPreprocVersion: (value) => set({ preprocVersion: value }),
+    setEmbeddingModel: (value) => set({ embeddingModel: value }),
+    setChunkSize: (value) => set((state) => {
+        const size = clampChunkSize(value, state.chunkSize);
+        const nextOverlap = clampChunkOverlap(state.chunkOverlap, size);
+        return { chunkSize: size, chunkOverlap: nextOverlap };
+    }),
+    setChunkOverlap: (value) => set((state) => ({
+        chunkOverlap: clampChunkOverlap(value, state.chunkSize),
+    })),
+    setUmapNNeighbors: (value) => set((state) => {
+        if (Number.isNaN(value)) {
+            return {};
+        }
+        const maxNeighbors = Math.max(2, Math.min(200, state.n - 1));
+        const minNeighbors = maxNeighbors < 5 ? maxNeighbors : 5;
+        const clamped = Math.min(Math.max(Math.round(value), minNeighbors), maxNeighbors);
+        const preset = inferUmapPreset(clamped, state.umapMinDist, state.umapMetric);
+        return {
+            umapNNeighbors: clamped,
+            umapPreset: preset,
+        };
+    }),
+    setUmapMinDist: (value) => set((state) => {
+        const numeric = Number(value);
+        if (Number.isNaN(numeric)) {
+            return {};
+        }
+        const raw = Math.min(0.99, Math.max(0, numeric));
+        const clamped = Math.round(raw * 100) / 100;
+        const preset = inferUmapPreset(state.umapNNeighbors, clamped, state.umapMetric);
+        return {
+            umapMinDist: clamped,
+            umapPreset: preset,
+        };
+    }),
+    setUmapMetric: (value) => set((state) => ({
+        umapMetric: value,
+        umapPreset: inferUmapPreset(state.umapNNeighbors, state.umapMinDist, value),
+    })),
+    setUmapSeed: (value) => set({ umapSeed: value ?? null }),
+    setUmapPreset: (preset) => set((state) => {
+        if (preset === "custom") {
+            return { umapPreset: preset };
+        }
+        const config = UMAP_PRESETS[preset];
+        const maxNeighbors = Math.max(2, Math.min(200, state.n - 1));
+        const minNeighbors = maxNeighbors < 5 ? maxNeighbors : 5;
+        const neighbors = Math.min(Math.max(config.n_neighbors, minNeighbors), maxNeighbors);
+        return {
+            umapPreset: preset,
+            umapNNeighbors: neighbors,
+            umapMinDist: config.min_dist,
+            umapMetric: config.metric,
+        };
+    }),
+    setProjectionMethod: async (method) => {
+        const state = get();
+        if (!state.currentRunId || !state.results) {
+            return;
+        }
+        if (state.projectionMethod === method && state.projectionVariants[method]) {
+            return;
+        }
+        const existing = state.projectionVariants[method];
+        if (existing) {
+            const updatedResults = applyProjectionState(state.results, existing, method);
+            set({
+                projectionMethod: method,
+                projectionWarnings: existing.metadata.warnings,
+                results: updatedResults,
+                isProjectionLoading: false,
+                projectionError: null,
+            });
+            return;
+        }
+        set({ isProjectionLoading: true, projectionError: null });
+        try {
+            const response = await fetchProjectionVariant(state.currentRunId, {
+                method,
+                mode: "both",
+            });
+            const variantState = buildProjectionVariantState(response);
+            set((current) => {
+                if (!current.results) {
+                    return current;
+                }
+                const updatedResults = applyProjectionState(current.results, variantState, method);
+                return {
+                    ...current,
+                    projectionMethod: method,
+                    projectionVariants: {
+                        ...current.projectionVariants,
+                        [method]: variantState,
+                    },
+                    projectionWarnings: variantState.metadata.warnings,
+                    isProjectionLoading: false,
+                    projectionError: null,
+                    results: updatedResults,
+                };
+            });
+        }
+        catch (error) {
+            set({
+                projectionError: error instanceof Error ? error.message : "Failed to load projection",
+            });
+        }
+        finally {
+            set({ isProjectionLoading: false });
+        }
+    },
+    setSeed: (value) => set({ seed: value ?? null }),
+    setMaxTokens: (value) => set({ maxTokens: value ?? null }),
+    setViewMode: (mode) => set({ viewMode: mode }),
+    setLevelMode: (mode) => set({
+        levelMode: mode,
+        selectedPointIds: mode === "responses" ? get().selectedPointIds : [],
+        selectedSegmentIds: mode === "segments" ? get().selectedSegmentIds : [],
+    }),
+    setPointSize: (value) => set({ pointSize: value }),
+    setSpreadFactor: (value) => set({ spreadFactor: value }),
+    setShowDensity: (value) => set({ showDensity: value }),
+    setShowEdges: (value) => set({ showEdges: value }),
+    setShowParentThreads: (value) => set({ showParentThreads: value }),
+    setExportIncludeProvenance: (value) => set({ exportIncludeProvenance: value }),
+    setHistoryOpen: (value) => set({ isHistoryOpen: value }),
+    setCurrentRunId: (runId) => set({ currentRunId: runId }),
+    applyRunSummary: (run) => set((state) => {
+        const chunkSize = clampChunkSize(run.chunk_size ?? state.chunkSize, state.chunkSize);
+        const chunkOverlap = clampChunkOverlap(run.chunk_overlap ?? state.chunkOverlap, chunkSize);
+        return {
+            prompt: run.prompt,
+            systemPrompt: run.system_prompt ?? defaultState.systemPrompt,
+            n: run.n,
+            model: run.model,
+            embeddingModel: run.embedding_model ?? state.embeddingModel,
+            useCache: run.use_cache ?? state.useCache,
+            clusterAlgo: run.cluster_algo ?? state.clusterAlgo,
+            hdbscanMinClusterSize: run.hdbscan_min_cluster_size ?? state.hdbscanMinClusterSize,
+            hdbscanMinSamples: run.hdbscan_min_samples ?? state.hdbscanMinSamples,
+            preprocVersion: run.preproc_version ?? state.preprocVersion,
+            umapNNeighbors: run.umap.n_neighbors,
+            umapMinDist: run.umap.min_dist,
+            umapMetric: run.umap.metric,
+            umapSeed: run.umap.seed ?? null,
+            umapPreset: inferUmapPreset(run.umap.n_neighbors, run.umap.min_dist, run.umap.metric),
+            temperature: run.temperature,
+            topP: run.top_p ?? state.topP,
+            seed: run.seed ?? null,
+            maxTokens: run.max_tokens ?? null,
+            chunkSize,
+            chunkOverlap,
+            progressStage: run.progress_stage ?? state.progressStage,
+            progressMessage: run.progress_message ?? state.progressMessage,
+            progressPercent: run.progress_percent ?? state.progressPercent,
+            progressMetadata: run.progress_metadata ?? state.progressMetadata,
+            projectionMethod: "umap",
+            projectionVariants: {},
+            projectionWarnings: [],
+            isProjectionLoading: false,
+            projectionError: null,
+        };
+    }),
+    setFocusedResponse: (value) => set({ focusedResponseId: value }),
+    setRunHistory: (runs) => set({ runHistory: runs }),
+    setRunNotes: (runId, notes) => set((state) => {
+        const nextHistory = state.runHistory.map((summary) => summary.id === runId
+            ? { ...summary, notes: notes ?? null }
+            : summary);
+        const nextResults = state.results && state.results.run.id === runId
+            ? {
+                ...state.results,
+                run: { ...state.results.run, notes: notes ?? null },
+            }
+            : state.results;
+        return { runHistory: nextHistory, results: nextResults };
+    }),
+    setJitterToken: (token) => set({ jitterToken: token }),
+    setHoveredPoint: (id) => set({ hoveredPointId: id ?? undefined }),
+    setHoveredSegment: (id) => set({ hoveredSegmentId: id ?? undefined }),
+    setHoveredCluster: (label) => set({ hoveredClusterLabel: label }),
+    setSelectedPoints: (payload) => set((state) => ({
+        selectedPointIds: typeof payload === "function"
+            ? payload(state.selectedPointIds)
+            : payload,
+    })),
+    setSelectedSegments: (payload) => set((state) => ({
+        selectedSegmentIds: typeof payload === "function"
+            ? payload(state.selectedSegmentIds)
+            : payload,
+    })),
+    toggleCluster: (label) => {
+        const key = String(label);
+        const visibility = { ...get().clusterVisibility };
+        visibility[key] = visibility[key] ?? true;
+        visibility[key] = !visibility[key];
+        set({ clusterVisibility: visibility });
+    },
+    toggleRole: (role) => {
+        const visibility = { ...get().roleVisibility };
+        visibility[role] = !(visibility[role] ?? true);
+        set({ roleVisibility: visibility });
+    },
+    setRolesVisibility: (roles, visible) => {
+        set((state) => {
+            const next = { ...state.roleVisibility };
+            roles.forEach((role) => {
+                next[role] = visible;
+            });
+            return { roleVisibility: next };
+        });
+    },
+    setRunMetrics: (metrics) => set({ runMetrics: metrics }),
+    setClusterMetrics: (metrics) => set({ clusterMetrics: metrics }),
+    setClusterParams: (params) => set((state) => ({
+        clusterAlgo: params?.algo ?? state.clusterAlgo,
+        hdbscanMinClusterSize: params?.minClusterSize != null
+            ? Math.max(2, Math.floor(params.minClusterSize))
+            : state.hdbscanMinClusterSize,
+        hdbscanMinSamples: params?.minSamples != null
+            ? Math.max(1, Math.floor(params.minSamples))
+            : state.hdbscanMinSamples,
+    })),
+    recomputeClusters: async (params = {}) => {
+        const runId = get().currentRunId;
+        if (!runId) {
+            return;
+        }
+        const algo = params?.algo ?? get().clusterAlgo;
+        const minClusterSize = params?.minClusterSize ?? get().hdbscanMinClusterSize;
+        const minSamples = params?.minSamples ?? get().hdbscanMinSamples;
+        set({ isRecomputingClusters: true });
+        try {
+            const payload = await recomputeClustersApi(runId, {
+                algo,
+                minClusterSize,
+                minSamples,
+            });
+            get().setResults(payload);
+        }
+        catch (error) {
+            console.error("Failed to recompute clusters", error);
+        }
+        finally {
+            set({ isRecomputingClusters: false });
+        }
+    },
+    setShowDuplicatesOnly: (value) => set({ showDuplicatesOnly: value }),
+    setClusterPalette: (palette) => set({ clusterPalette: palette }),
+    setSegmentEdges: (edges, meta) => set((state) => ({
+        segmentEdges: edges,
+        segmentGraphMode: meta?.mode ?? state.segmentGraphMode,
+        segmentGraphAutoSimplified: meta?.autoSimplified ?? state.segmentGraphAutoSimplified,
+        segmentGraphLoading: meta?.loading ?? false,
+        segmentGraphError: meta?.error ?? null,
+        graphEdgeK: meta?.k != null && Number.isFinite(meta.k)
+            ? meta.k
+            : state.graphEdgeK,
+        graphEdgeThreshold: meta?.threshold != null && Number.isFinite(meta.threshold)
+            ? meta.threshold
+            : state.graphEdgeThreshold,
+    })),
+    refreshSegmentGraph: async () => {
+        const state = get();
+        const runId = state.currentRunId ?? state.results?.run.id;
+        if (!runId) {
+            return;
+        }
+        set({ segmentGraphLoading: true, segmentGraphError: null });
+        try {
+            const response = await fetchRunGraph(runId, {
+                mode: state.simplifyEdges ? "simplified" : "full",
+                k: state.graphEdgeK,
+                sim: state.graphEdgeThreshold,
+            });
+            const edges = response.edges.map((edge) => ({
+                source_id: edge.source,
+                target_id: edge.target,
+                score: edge.similarity,
+            }));
+            get().setSegmentEdges(edges, {
+                mode: response.mode,
+                autoSimplified: response.auto_simplified,
+                k: response.k,
+                threshold: response.threshold,
+                loading: false,
+                error: null,
+            });
+        }
+        catch (error) {
+            console.error("Failed to fetch segment graph", error);
+            const message = error instanceof Error ? error.message : "Failed to load segment graph";
+            set({ segmentGraphLoading: false, segmentGraphError: message });
+        }
+    },
+    setSimplifyEdges: async (value) => {
+        set({ simplifyEdges: value });
+        await get().refreshSegmentGraph();
+    },
+    setGraphEdgeK: async (value) => {
+        const clamped = Math.max(GRAPH_K_MIN, Math.min(GRAPH_K_MAX, Math.round(value)));
+        set({ graphEdgeK: clamped });
+        await get().refreshSegmentGraph();
+    },
+    setGraphEdgeThreshold: async (value) => {
+        const clamped = Math.max(0, Math.min(1, Number(value)));
+        set({ graphEdgeThreshold: clamped });
+        await get().refreshSegmentGraph();
+    },
+    setShowNeighborSpokes: (value) => set({ showNeighborSpokes: value }),
+    setViewportBounds: (bounds) => set((state) => {
+        const current = state.viewportBounds;
+        if (!bounds) {
+            return current ? { viewportBounds: null } : {};
+        }
+        const compare = (a, b) => {
+            if (a == null && b == null) {
+                return true;
+            }
+            if (a == null || b == null) {
+                return false;
+            }
+            return Math.abs(a - b) < VIEWPORT_EPSILON;
+        };
+        const unchanged = !!current &&
+            current.dimension === bounds.dimension &&
+            compare(current.minX, bounds.minX) &&
+            compare(current.maxX, bounds.maxX) &&
+            compare(current.minY, bounds.minY) &&
+            compare(current.maxY, bounds.maxY) &&
+            compare(current.minZ ?? null, bounds.minZ ?? null) &&
+            compare(current.maxZ ?? null, bounds.maxZ ?? null);
+        if (unchanged) {
+            return {};
+        }
+        return { viewportBounds: { ...bounds } };
+    }),
+    selectTopOutliers: (count = 8) => {
+        const { results, levelMode } = get();
+        if (!results) {
+            return;
+        }
+        if (levelMode === "segments") {
+            get().selectTopSegmentOutliers(count);
+            return;
+        }
+        const ranked = [...results.points]
+            .map((point) => ({
+            id: point.id,
+            score: point.outlier_score ?? (point.cluster === -1 ? 1 : 0),
+        }))
+            .filter((item) => item.score > 0)
+            .sort((a, b) => b.score - a.score)
+            .slice(0, count)
+            .map((item) => item.id);
+        if (ranked.length) {
+            set({ selectedPointIds: ranked, levelMode: "responses" });
+        }
+    },
+    selectTopSegmentOutliers: (count = 12) => {
+        const { results } = get();
+        if (!results) {
+            return;
+        }
+        const ranked = [...results.segments]
+            .map((segment) => {
+            const noiseScore = segment.cluster === -1 ? 1 : undefined;
+            const silhouette = segment.silhouette_score != null
+                ? Math.abs(segment.silhouette_score)
+                : undefined;
+            const score = segment.outlier_score ?? noiseScore ?? silhouette ?? 0;
+            return { id: segment.id, score };
+        })
+            .filter((item) => item.score > 0)
+            .sort((a, b) => b.score - a.score)
+            .slice(0, count)
+            .map((item) => item.id);
+        if (ranked.length) {
+            set({ selectedSegmentIds: ranked, levelMode: "segments" });
+        }
+    },
+    setProgress: ({ stage, message, percent, metadata }) => set((state) => ({
+        progressStage: stage !== undefined ? (stage ?? null) : state.progressStage,
+        progressMessage: message !== undefined ? (message ?? null) : state.progressMessage,
+        progressPercent: percent !== undefined
+            ? percent === null
+                ? null
+                : Math.min(1, Math.max(0, percent))
+            : state.progressPercent,
+        progressMetadata: metadata !== undefined
+            ? (metadata ?? null)
+            : state.progressMetadata,
+    })),
+    startGeneration: () => set({
+        runMetrics: null,
+        isGenerating: true,
+        selectedPointIds: [],
+        selectedSegmentIds: [],
+        hoveredPointId: undefined,
+        hoveredSegmentId: undefined,
+        focusedResponseId: undefined,
+        hoveredClusterLabel: null,
+        progressStage: "queued",
+        progressMessage: "Submitting run to backend...",
+        progressPercent: 0,
+        progressMetadata: null,
+        segmentEdges: [],
+        segmentGraphMode: "full",
+        segmentGraphAutoSimplified: false,
+        segmentGraphLoading: false,
+        segmentGraphError: null,
+        projectionMethod: "umap",
+        projectionVariants: {},
+        projectionWarnings: [],
+        isProjectionLoading: false,
+        projectionError: null,
+        viewportBounds: null,
+    }),
+    finishGeneration: (runId, results) => set((state) => ({
+        isGenerating: false,
+        currentRunId: runId ? runId : state.currentRunId,
+        results: results ?? state.results,
+        focusedResponseId: undefined,
+        hoveredClusterLabel: null,
+        progressStage: results ? null : state.progressStage,
+        progressMessage: results ? null : state.progressMessage,
+        progressPercent: results ? null : state.progressPercent,
+        progressMetadata: results ? null : state.progressMetadata,
+    })),
+    setResults: (results) => {
+        const palette = buildClusterPalette(results.clusters);
+        const visibility = {};
+        results.clusters.forEach((cluster) => {
+            visibility[String(cluster.label)] = true;
+        });
+        const roleVisibility = {};
+        results.segments
+            .map((segment) => segment.role?.toLowerCase())
+            .filter((role) => Boolean(role))
+            .forEach((role) => {
+            roleVisibility[role] = roleVisibility[role] ?? true;
+        });
+        const normalizedResults = {
+            ...results,
+            points: results.points.map((point) => ({ ...point, hidden: false })),
+            projection_quality: {
+                ...(results.projection_quality ?? {}),
+                ...(results.quality ? { umap: results.quality } : {}),
+            },
+        };
+        const projectionState = {
+            coords: Object.fromEntries(normalizedResults.points.map((point) => [
+                point.id,
+                {
+                    coords2d: [point.coords_2d[0], point.coords_2d[1]],
+                    coords3d: [point.coords_3d[0], point.coords_3d[1], point.coords_3d[2]],
+                },
+            ])),
+            subsetIds: null,
+            metadata: {
+                fromCache: true,
+                cachedAt: null,
+                warnings: [],
+                requestedParams: {},
+                resolvedParams: {},
+                isSubsample: false,
+                pointCount: normalizedResults.points.length,
+                totalCount: normalizedResults.points.length,
+                subsampleStrategy: null,
+            },
+            quality: normalizedResults.quality ?? {
+                trustworthiness_2d: undefined,
+                trustworthiness_3d: undefined,
+                continuity_2d: undefined,
+                continuity_3d: undefined,
+            },
+        };
+        set((state) => {
+            const chunkSize = clampChunkSize(normalizedResults.run.chunk_size ?? normalizedResults.chunk_size ?? state.chunkSize, state.chunkSize);
+            const chunkOverlap = clampChunkOverlap(normalizedResults.run.chunk_overlap ??
+                normalizedResults.chunk_overlap ??
+                state.chunkOverlap, chunkSize);
+            return {
+                prompt: normalizedResults.run.prompt,
+                systemPrompt: normalizedResults.run.system_prompt ?? defaultState.systemPrompt,
+                n: normalizedResults.run.n,
+                model: normalizedResults.run.model,
+                embeddingModel: normalizedResults.run.embedding_model ?? state.embeddingModel,
+                useCache: normalizedResults.run.use_cache ?? state.useCache,
+                clusterAlgo: normalizedResults.run.cluster_algo ?? state.clusterAlgo,
+                hdbscanMinClusterSize: normalizedResults.run.hdbscan_min_cluster_size ?? state.hdbscanMinClusterSize,
+                hdbscanMinSamples: normalizedResults.run.hdbscan_min_samples ?? state.hdbscanMinSamples,
+                clusterMetrics: normalizedResults.cluster_metrics ?? null,
+                preprocVersion: normalizedResults.run.preproc_version ?? state.preprocVersion,
+                umapNNeighbors: normalizedResults.run.umap.n_neighbors,
+                umapMinDist: normalizedResults.run.umap.min_dist,
+                umapMetric: normalizedResults.run.umap.metric,
+                umapSeed: normalizedResults.run.umap.seed ?? null,
+                umapPreset: inferUmapPreset(normalizedResults.run.umap.n_neighbors, normalizedResults.run.umap.min_dist, normalizedResults.run.umap.metric),
+                temperature: normalizedResults.run.temperature,
+                topP: normalizedResults.run.top_p ?? state.topP,
+                seed: normalizedResults.run.seed ?? null,
+                maxTokens: normalizedResults.run.max_tokens ?? null,
+                chunkSize,
+                chunkOverlap,
+                progressStage: normalizedResults.run.progress_stage ?? state.progressStage,
+                progressMessage: normalizedResults.run.progress_message ?? state.progressMessage,
+                progressPercent: normalizedResults.run.progress_percent ?? state.progressPercent,
+                progressMetadata: normalizedResults.run.progress_metadata ?? state.progressMetadata,
+                results: normalizedResults,
+                clusterPalette: palette,
+                clusterVisibility: visibility,
+                roleVisibility,
+                selectedPointIds: [],
+                selectedSegmentIds: [],
+                hoveredPointId: undefined,
+                hoveredSegmentId: undefined,
+                focusedResponseId: undefined,
+                hoveredClusterLabel: null,
+                runMetrics: null,
+                showDuplicatesOnly: false,
+                projectionMethod: "umap",
+                projectionVariants: { umap: projectionState },
+                projectionWarnings: [],
+                isProjectionLoading: false,
+                projectionError: null,
+                segmentEdges: normalizedResults.segment_edges,
+                segmentGraphMode: "full",
+                segmentGraphAutoSimplified: false,
+                segmentGraphLoading: false,
+                segmentGraphError: null,
+                viewportBounds: null,
+            };
+        });
+    },
+    reset: () => set({
+        ...defaultState,
+        jitterToken: null,
+        isHistoryOpen: false,
+        isGenerating: false,
+        currentRunId: undefined,
+        results: undefined,
+        hoveredPointId: undefined,
+        hoveredSegmentId: undefined,
+        focusedResponseId: undefined,
+        runHistory: [],
+        segmentEdges: [],
+        segmentGraphMode: "full",
+        segmentGraphAutoSimplified: false,
+        segmentGraphLoading: false,
+        segmentGraphError: null,
+        projectionMethod: "umap",
+        projectionVariants: {},
+        projectionWarnings: [],
+        isProjectionLoading: false,
+        projectionError: null,
+        viewportBounds: null,
+    }),
+}), {
+    name: "semantic-landscape-run-store",
+    partialize: (state) => {
+        const chunkSize = clampChunkSize(state.chunkSize, state.chunkSize);
+        const chunkOverlap = clampChunkOverlap(state.chunkOverlap, chunkSize);
+        return {
+            prompt: state.prompt,
+            systemPrompt: state.systemPrompt,
+            n: state.n,
+            temperature: state.temperature,
+            topP: state.topP,
+            model: state.model,
+            seed: state.seed,
+            maxTokens: state.maxTokens,
+            embeddingModel: state.embeddingModel,
+            umapNNeighbors: state.umapNNeighbors,
+            umapMinDist: state.umapMinDist,
+            umapMetric: state.umapMetric,
+            umapSeed: state.umapSeed,
+            umapPreset: state.umapPreset,
+            projectionMethod: state.projectionMethod,
+            chunkSize,
+            chunkOverlap,
+            viewMode: state.viewMode,
+            levelMode: state.levelMode,
+            pointSize: state.pointSize,
+            spreadFactor: state.spreadFactor,
+            showDensity: state.showDensity,
+            showEdges: state.showEdges,
+            showParentThreads: state.showParentThreads,
+            useCache: state.useCache,
+            simplifyEdges: state.simplifyEdges,
+            showNeighborSpokes: state.showNeighborSpokes,
+            exportIncludeProvenance: state.exportIncludeProvenance,
+            showDuplicatesOnly: state.showDuplicatesOnly,
+            graphEdgeK: state.graphEdgeK,
+            graphEdgeThreshold: state.graphEdgeThreshold,
+        };
+    },
+}));
+function buildProjectionVariantState(response) {
+    const coordsEntries = response.response_ids.map((id, index) => {
+        const source2d = response.coords_2d?.[index] ?? [0, 0];
+        const source3d = response.coords_3d?.[index] ?? [0, 0, 0];
+        const coords2d = [
+            Number(source2d[0] ?? 0),
+            Number(source2d[1] ?? 0),
+        ];
+        const coords3d = [
+            Number(source3d[0] ?? 0),
+            Number(source3d[1] ?? 0),
+            Number(source3d[2] ?? 0),
+        ];
+        return [id, { coords2d, coords3d }];
+    });
+    return {
+        coords: Object.fromEntries(coordsEntries),
+        subsetIds: response.is_subsample ? [...response.response_ids] : null,
+        metadata: {
+            fromCache: response.from_cache,
+            cachedAt: response.cached_at ?? null,
+            warnings: response.warnings ?? [],
+            requestedParams: response.requested_params ?? {},
+            resolvedParams: response.resolved_params ?? {},
+            isSubsample: response.is_subsample,
+            pointCount: response.point_count,
+            totalCount: response.total_count,
+            subsampleStrategy: response.subsample_strategy ?? null,
+        },
+        quality: {
+            trustworthiness_2d: response.trustworthiness_2d ?? undefined,
+            trustworthiness_3d: response.trustworthiness_3d ?? undefined,
+            continuity_2d: response.continuity_2d ?? undefined,
+            continuity_3d: response.continuity_3d ?? undefined,
+        },
+    };
+}
+function applyProjectionState(results, variant, method) {
+    const subset = variant.subsetIds ? new Set(variant.subsetIds) : null;
+    const points = results.points.map((point) => {
+        const overrides = variant.coords[point.id];
+        const hidden = subset ? !subset.has(point.id) : false;
+        if (!overrides) {
+            return { ...point, hidden };
+        }
+        return {
+            ...point,
+            coords_2d: [overrides.coords2d[0], overrides.coords2d[1]],
+            coords_3d: [
+                overrides.coords3d[0],
+                overrides.coords3d[1],
+                overrides.coords3d[2],
+            ],
+            hidden,
+        };
+    });
+    return {
+        ...results,
+        points,
+        quality: variant.quality,
+        projection_quality: {
+            ...(results.projection_quality ?? {}),
+            [method]: variant.quality,
+        },
+    };
+}
+function buildClusterPalette(clusters) {
+    if (!clusters.length) {
+        return {};
+    }
+    const hues = [210, 280, 340, 20, 100, 160];
+    const palette = {};
+    clusters.forEach((cluster, index) => {
+        const hue = hues[index % hues.length] + index * 11;
+        palette[String(cluster.label)] = `hsl(${hue % 360}deg 80% 62%)`;
+    });
+    palette["-1"] = "#94a3b8";
+    return palette;
+}
+export function filterSegmentsByRole(segments, roleVisibility) {
+    const activeRoles = Object.entries(roleVisibility)
+        .filter(([, visible]) => visible)
+        .map(([role]) => role);
+    if (!activeRoles.length) {
+        return segments;
+    }
+    const allowAll = Object.values(roleVisibility).every((visible) => visible);
+    if (allowAll) {
+        return segments;
+    }
+    return segments.filter((segment) => {
+        if (!segment.role) {
+            return true;
+        }
+        const role = segment.role.toLowerCase();
+        return roleVisibility[role] ?? true;
+    });
+}
+export function filterEdgesByVisibility(edges, visibleSegments) {
+    return edges.filter((edge) => visibleSegments.has(edge.source_id) &&
+        visibleSegments.has(edge.target_id));
+}

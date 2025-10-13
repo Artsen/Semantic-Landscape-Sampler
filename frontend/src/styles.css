@@ -8,14 +8,44 @@
 
 :root {
   color-scheme: dark;
+  --bg: #0e0f13;
+  --panel: #15181e;
+  --panel-elev: #1b1f27;
+  --border: #262a33;
+  --muted: #9aa4b2;
+  --text: #e8eaed;
+  --text-dim: #c7cbd1;
+  --accent: #10a37f;
+  --accent-weak: #0b7d61;
+  --danger: #ef4444;
+  --warning: #f59e0b;
+  --ok: #22c55e;
+  --focus: #2dd4bf;
+  --radius: 14px;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+  --bg: #ffffff;
+  --panel: #f8fafc;
+  --panel-elev: #ffffff;
+  --border: #e5e7eb;
+  --muted: #6b7280;
+  --text: #111827;
+  --text-dim: #374151;
+  --accent: #0ea371;
+  --accent-weak: #0b7d61;
+  --danger: #dc2626;
+  --warning: #d97706;
+  --ok: #16a34a;
+  --focus: #0ea5e9;
 }
 
 body {
   margin: 0;
   font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  background: radial-gradient(circle at top, rgba(56, 189, 248, 0.12), transparent 55%),
-    radial-gradient(circle at bottom, rgba(14, 165, 233, 0.08), transparent 50%),
-    #050816;
+  background: var(--bg);
+  color: var(--text);
   min-height: 100vh;
 }
 
@@ -29,8 +59,7 @@ body {
 }
 
 .glass-panel {
-  background: rgba(15, 23, 42, 0.6);
-  backdrop-filter: blur(18px);
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  box-shadow: 0 20px 45px -20px rgba(15, 23, 42, 0.75);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
 }

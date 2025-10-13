@@ -83,10 +83,11 @@ export const RunNotesEditor = memo(function RunNotesEditor() {
     : "";
 
   return (
-    <section className="glass-panel rounded-2xl border border-slate-800/60 bg-slate-950/60 px-4 py-4 text-sm text-slate-200">
+    <section className="glass-panel rounded-2xl border border-slate-800/60 bg-slate-950/60 px-4 py-4 text-sm text-slate-200" title="Keep personal reminders about why this run matters or what to revisit.">
       <header className="flex items-center justify-between">
         <div>
           <p className="text-[11px] uppercase tracking-[0.22rem] text-slate-500">Run notes</p>
+          <p className="text-[11px] text-slate-500">Notes are private to you and saved with the run metadata.</p>
           <h3 className="text-base font-semibold text-slate-100">Personal annotations</h3>
         </div>
         <span className="text-[11px] uppercase tracking-wide text-slate-500">

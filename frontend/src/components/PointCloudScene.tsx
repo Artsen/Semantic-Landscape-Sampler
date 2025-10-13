@@ -30,7 +30,8 @@ import {
   useRunStore,
   type SceneDimension,
 } from "@/store/runStore";
-import type { ResponsePoint, ResponseHull, SegmentEdge, SegmentPoint } from "@/types/run";
+import { useSegmentContext } from "@/hooks/useSegmentContext";
+import type { ResponsePoint, ResponseHull, SegmentEdge, SegmentPoint, Viewport2D, Viewport3D } from "@/types/run";
 
 interface PointCloudSceneProps {
   responses: ResponsePoint[];
@@ -52,6 +53,12 @@ type TooltipState = {
   id: string;
   x: number;
   y: number;
+};
+
+type TooltipContent = {
+  title: ReactNode;
+  body?: ReactNode;
+  footer?: ReactNode;
 };
 
 type ProjectedPoint = {
@@ -86,15 +93,18 @@ interface BaseCloudProps<T extends CloudPoint> {
   pointSize: number;
   clusterPalette: Record<string, string>;
   showDensity: boolean;
-  tooltipTitle: (point: T) => string;
-  tooltipBody: (point: T) => string;
+  renderTooltip: (point: T) => TooltipContent;
   colorize?: (payload: { point: T; color: THREE.Color }) => void;
   scales: PositionScales;
   overlay?: (context: OverlayContext<T>) => ReactNode;
+  onViewportChange?: (bounds: ViewportBounds | null) => void;
+  showPerformanceStatsOverride?: boolean;
+  onShowPerformanceStatsChange?: (value: boolean) => void;
   focusPredicate?: (point: T) => boolean;
   highlightedCluster?: number | null;
 }
 
+type ViewportBounds = (Viewport3D & { dimension: "3d" }) | (Viewport2D & { dimension: "2d"; minZ?: number; maxZ?: number });
 function derivePositionScales<T extends CloudPoint>(points: readonly T[], spread: number = 1): PositionScales {
   if (!points.length) {
     return { scale3d: 1, scale2d: 1, center3d: [0, 0, 0], center2d: [0, 0] };
@@ -105,7 +115,6 @@ function derivePositionScales<T extends CloudPoint>(points: readonly T[], spread
   let sumZ3 = 0;
   let sumX2 = 0;
   let sumY2 = 0;
-  const count = points.length;
 
   points.forEach((point) => {
     sumX3 += point.coords_3d[0];
@@ -115,24 +124,35 @@ function derivePositionScales<T extends CloudPoint>(points: readonly T[], spread
     sumY2 += point.coords_2d[1];
   });
 
+  const count = points.length;
   const center3d: [number, number, number] = [sumX3 / count, sumY3 / count, sumZ3 / count];
   const center2d: [number, number] = [sumX2 / count, sumY2 / count];
 
-  let max3d = 0;
-  let max2d = 0;
+  let maxRadius3d = 0;
+  let maxRadius2d = 0;
   points.forEach((point) => {
-    const x3 = point.coords_3d[0] - center3d[0];
-    const y3 = point.coords_3d[1] - center3d[1];
-    const z3 = point.coords_3d[2] - center3d[2];
-    const x2 = point.coords_2d[0] - center2d[0];
-    const y2 = point.coords_2d[1] - center2d[1];
-    max3d = Math.max(max3d, Math.hypot(x3, y3, z3));
-    max2d = Math.max(max2d, Math.hypot(x2, y2));
+    const dx3 = point.coords_3d[0] - center3d[0];
+    const dy3 = point.coords_3d[1] - center3d[1];
+    const dz3 = point.coords_3d[2] - center3d[2];
+    const radius3d = Math.sqrt(dx3 * dx3 + dy3 * dy3 + dz3 * dz3);
+    if (radius3d > maxRadius3d) {
+      maxRadius3d = radius3d;
+    }
+
+    const dx2 = point.coords_2d[0] - center2d[0];
+    const dy2 = point.coords_2d[1] - center2d[1];
+    const radius2d = Math.sqrt(dx2 * dx2 + dy2 * dy2);
+    if (radius2d > maxRadius2d) {
+      maxRadius2d = radius2d;
+    }
   });
 
+  const scale3d = maxRadius3d > 0 ? spread / maxRadius3d : spread;
+  const scale2d = maxRadius2d > 0 ? spread / maxRadius2d : spread;
+
   return {
-    scale3d: max3d > 0 ? spread / max3d : spread,
-    scale2d: max2d > 0 ? spread / max2d : spread,
+    scale3d,
+    scale2d,
     center3d,
     center2d,
   };
@@ -148,18 +168,26 @@ function BaseCloud<T extends CloudPoint>({
   pointSize,
   clusterPalette,
   showDensity,
-  tooltipTitle,
-  tooltipBody,
+  renderTooltip,
   colorize,
   scales,
   overlay,
   focusPredicate,
   highlightedCluster,
+  onViewportChange,
+  showPerformanceStatsOverride,
+  onShowPerformanceStatsChange,
 }: BaseCloudProps<T>) {
   const [tooltip, setTooltip] = useState<TooltipState | null>(null);
   const projectedRef = useRef<{ points: ProjectedPoint[]; rect: DOMRect } | null>(null);
   const densityCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const setViewportBounds = useRunStore((state) => state.setViewportBounds);
+
+  const { showPerformanceStats, setShowPerformanceStats } = useRunStore((state) => ({
+    showPerformanceStats: state.showPerformanceStats,
+    setShowPerformanceStats: state.setShowPerformanceStats,
+  }));
 
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
   const visibleMap = useMemo(() => new Map(points.map((point) => [point.id, point])), [points]);
@@ -305,6 +333,88 @@ function BaseCloud<T extends CloudPoint>({
   const handleProjectedUpdate = useCallback(
     (projected: ProjectedPoint[], rect: DOMRect) => {
       projectedRef.current = { points: projected, rect };
+
+      const margin = 12;
+      const visible: T[] = [];
+      for (const point of projected) {
+        if (point.x < -margin || point.x > rect.width + margin) {
+          continue;
+        }
+        if (point.y < -margin || point.y > rect.height + margin) {
+          continue;
+        }
+        const datum = visibleMap.get(point.id);
+        if (datum) {
+          visible.push(datum);
+        }
+      }
+
+      if (!visible.length) {
+        setViewportBounds(null);
+      } else if (viewMode === "3d") {
+        let minX = Number.POSITIVE_INFINITY;
+        let maxX = Number.NEGATIVE_INFINITY;
+        let minY = Number.POSITIVE_INFINITY;
+        let maxY = Number.NEGATIVE_INFINITY;
+        let minZ = Number.POSITIVE_INFINITY;
+        let maxZ = Number.NEGATIVE_INFINITY;
+        visible.forEach((item) => {
+          const [x, y, z] = item.coords_3d;
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+          if (z < minZ) minZ = z;
+          if (z > maxZ) maxZ = z;
+        });
+        setViewportBounds({
+          dimension: "3d",
+          minX,
+          maxX,
+          minY,
+          maxY,
+          minZ,
+          maxZ,
+        });
+      } else {
+        let minX = Number.POSITIVE_INFINITY;
+        let maxX = Number.NEGATIVE_INFINITY;
+        let minY = Number.POSITIVE_INFINITY;
+        let maxY = Number.NEGATIVE_INFINITY;
+        let minZ = Number.POSITIVE_INFINITY;
+        let maxZ = Number.NEGATIVE_INFINITY;
+        visible.forEach((item) => {
+          const [x2, y2] = item.coords_2d;
+          if (x2 < minX) minX = x2;
+          if (x2 > maxX) maxX = x2;
+          if (y2 < minY) minY = y2;
+          if (y2 > maxY) maxY = y2;
+          const z3 = item.coords_3d[2];
+          if (z3 < minZ) minZ = z3;
+          if (z3 > maxZ) maxZ = z3;
+        });
+        const bounds2d: {
+          dimension: "2d";
+          minX: number;
+          maxX: number;
+          minY: number;
+          maxY: number;
+          minZ?: number;
+          maxZ?: number;
+        } = {
+          dimension: "2d",
+          minX,
+          maxX,
+          minY,
+          maxY,
+        };
+        if (Number.isFinite(minZ) && Number.isFinite(maxZ)) {
+          bounds2d.minZ = minZ;
+          bounds2d.maxZ = maxZ;
+        }
+        setViewportBounds(bounds2d);
+      }
+
       if (!showDensity) {
         return;
       }
@@ -335,7 +445,7 @@ function BaseCloud<T extends CloudPoint>({
         ctx.fill();
       });
     },
-    [showDensity],
+    [showDensity, setViewportBounds, visibleMap, viewMode],
   );
 
   useEffect(() => {
@@ -364,7 +474,11 @@ function BaseCloud<T extends CloudPoint>({
   }, [hoveredId, prepared]);
 
   return (
-    <div ref={containerRef} className="relative h-full w-full">
+    <div
+      ref={containerRef}
+      className="relative h-full w-full"
+      onDoubleClick={() => setShowPerformanceStats(!showPerformanceStats)}
+    >
       <Canvas
         key={viewMode}
         orthographic={viewMode === "2d"}
@@ -387,7 +501,7 @@ function BaseCloud<T extends CloudPoint>({
           </Points>
         ) : null}
         {overlayElement}
-        <Stats className="text-xs" />
+        {showPerformanceStats ? <Stats className="text-xs" /> : null}
       </Canvas>
 
       {showDensity ? (
@@ -406,13 +520,19 @@ function BaseCloud<T extends CloudPoint>({
         if (!point) {
           return null;
         }
+        const { title, body, footer } = renderTooltip(point);
         return (
           <div
             className="pointer-events-none absolute z-40 max-w-xs rounded-lg border border-slate-700/80 bg-slate-900/90 p-3 text-xs text-slate-200 shadow-lg"
             style={{ left: tooltip.x + 16, top: tooltip.y + 16 }}
           >
-            <p className="font-semibold text-cyan-300">{tooltipTitle(point)}</p>
-            <p className="mt-1 text-[11px] text-slate-400">{tooltipBody(point)}</p>
+            <div className="font-semibold text-cyan-300">{title}</div>
+            {body ? (
+              <div className="mt-2 space-y-1 text-[11px] text-slate-300">{body}</div>
+            ) : null}
+            {footer ? (
+              <div className="mt-2 text-[10px] text-slate-500">{footer}</div>
+            ) : null}
           </div>
         );
       })() : null}
@@ -749,15 +869,20 @@ const ResponseCloud = memo(function ResponseCloud({ points }: { points: Response
       points.filter((point) => {
         const key = String(point.cluster ?? -1);
         const visible = clusterVisibility[key];
-        return visible !== false;
+        return visible !== false && !point.hidden;
       }),
     [points, clusterVisibility],
   );
 
   const scales = useMemo(() => derivePositionScales(visiblePoints, spreadFactor), [visiblePoints, spreadFactor]);
 
-  const tooltipTitle = useCallback((point: ResponsePoint) => `Sample #${point.index}`, []);
-  const tooltipBody = useCallback((point: ResponsePoint) => point.text_preview ?? "", []);
+  const renderTooltip = useCallback(
+    (point: ResponsePoint): TooltipContent => ({
+      title: `Sample #${point.index}`,
+      body: point.text_preview ?? "",
+    }),
+    [],
+  );
 
   return (
     <BaseCloud
@@ -771,8 +896,7 @@ const ResponseCloud = memo(function ResponseCloud({ points }: { points: Response
       clusterPalette={clusterPalette}
       focusPredicate={focusedResponseId ? (point) => point.id === focusedResponseId : undefined}
       showDensity={showDensity}
-      tooltipTitle={tooltipTitle}
-      tooltipBody={tooltipBody}
+      renderTooltip={renderTooltip}
       scales={scales}
       highlightedCluster={hoveredClusterLabel ?? null}
     />
@@ -803,6 +927,9 @@ const SegmentCloud = memo(function SegmentCloud({ segments, edges, hulls }: Segm
     focusedResponseId,
     setFocusedResponse,
     hoveredClusterLabel,
+    showNeighborSpokes,
+    graphEdgeK,
+    showDuplicatesOnly,
   } = useRunStore((state) => ({
     viewMode: state.viewMode,
     pointSize: state.pointSize,
@@ -820,11 +947,44 @@ const SegmentCloud = memo(function SegmentCloud({ segments, edges, hulls }: Segm
     focusedResponseId: state.focusedResponseId,
     setFocusedResponse: state.setFocusedResponse,
     hoveredClusterLabel: state.hoveredClusterLabel,
+    showNeighborSpokes: state.showNeighborSpokes,
+    graphEdgeK: state.graphEdgeK,
+    showDuplicatesOnly: state.showDuplicatesOnly,
   }));
+
+  const [hoverProbeId, setHoverProbeId] = useState<string | undefined>(undefined);
+
+  useEffect(() => {
+    if (!hoveredSegmentId) {
+      const timeout = window.setTimeout(() => setHoverProbeId(undefined), 120);
+      return () => window.clearTimeout(timeout);
+    }
+    const timeout = window.setTimeout(
+      () => setHoverProbeId(hoveredSegmentId),
+      120,
+    );
+    return () => window.clearTimeout(timeout);
+  }, [hoveredSegmentId]);
+
+  const neighborCount = Math.max(3, Math.min(12, graphEdgeK));
+
+  const {
+    data: hoveredContext,
+    isFetching: contextLoading,
+  } = useSegmentContext(hoverProbeId, {
+    enabled: Boolean(hoverProbeId),
+    k: neighborCount,
+    staleTimeMs: 180_000,
+  });
 
   const roleFiltered = useMemo(
     () => filterSegmentsByRole(segments, roleVisibility),
     [segments, roleVisibility],
+  );
+
+  const duplicatesFiltered = useMemo(
+    () => (showDuplicatesOnly ? roleFiltered.filter((segment) => segment.is_duplicate) : roleFiltered),
+    [roleFiltered, showDuplicatesOnly],
   );
 
   const sequenceRatios = useMemo(() => {
@@ -846,6 +1006,15 @@ const SegmentCloud = memo(function SegmentCloud({ segments, edges, hulls }: Segm
     return ratios;
   }, [segments]);
 
+  const neighborPreview = useMemo(() => {
+    if (!hoveredContext || hoveredContext.segment_id !== hoveredSegmentId) {
+      return [];
+    }
+    return hoveredContext.neighbors.slice(0, Math.min(12, neighborCount));
+  }, [hoveredContext, hoveredSegmentId, neighborCount]);
+
+  const neighborSpokeTargets = showNeighborSpokes ? neighborPreview : [];
+
   const [startColor, midColor, endColor] = useMemo(
     () => [new THREE.Color("#16a34a"), new THREE.Color("#2563eb"), new THREE.Color("#dc2626")],
     [],
@@ -853,12 +1022,12 @@ const SegmentCloud = memo(function SegmentCloud({ segments, edges, hulls }: Segm
 
   const visibleSegments = useMemo(
     () =>
-      roleFiltered.filter((segment) => {
+      duplicatesFiltered.filter((segment) => {
         const key = String(segment.cluster ?? -1);
         const visible = clusterVisibility[key];
         return visible !== false;
       }),
-    [roleFiltered, clusterVisibility],
+    [duplicatesFiltered, clusterVisibility],
   );
 
   const scales = useMemo(() => derivePositionScales(visibleSegments, spreadFactor), [visibleSegments, spreadFactor]);
@@ -879,11 +1048,91 @@ const SegmentCloud = memo(function SegmentCloud({ segments, edges, hulls }: Segm
     [sequenceRatios, startColor, midColor, endColor],
   );
 
-  const tooltipTitle = useCallback((segment: SegmentPoint) => {
-    const roleLabel = segment.role ? segment.role : "segment";
-    return `${roleLabel} · ${segment.position + 1}`;
-  }, []);
-  const tooltipBody = useCallback((segment: SegmentPoint) => segment.text ?? "", []);
+  const renderTooltip = useCallback(
+    (segment: SegmentPoint): TooltipContent => {
+      const roleLabel = segment.role ? segment.role : "segment";
+      const title = `${roleLabel} · ${segment.position + 1}`;
+      const rawText = segment.text ?? "";
+      const truncated = rawText.length > 220 ? `${rawText.slice(0, 220)}…` : rawText;
+      const isHover = hoveredSegmentId === segment.id;
+      const contextMatch = hoveredContext && hoveredContext.segment_id === segment.id;
+      if (!contextMatch) {
+        return {
+          title,
+          body: truncated,
+          footer: isHover && contextLoading ? "Loading context…" : undefined,
+        };
+      }
+
+      const topTerms = hoveredContext.top_terms.slice(0, 4);
+      const neighbors = neighborPreview;
+      const neighborSummary = neighbors.slice(0, 3);
+      const exemplarPreview = hoveredContext.exemplar_preview || "";
+      const why = hoveredContext.why_here ?? {};
+
+      return {
+        title,
+        body: (
+          <>
+            <p className="text-[11px] text-slate-200">{truncated}</p>
+            {(segment.is_cached || segment.is_duplicate) && (
+              <div className="mt-2 flex flex-wrap gap-2 text-[10px]">
+                {segment.is_cached ? (
+                  <span className="rounded-full border border-emerald-400/40 bg-emerald-500/10 px-2 py-[1px] text-emerald-200">
+                    Cached
+                  </span>
+                ) : null}
+                {segment.is_duplicate ? (
+                  <span className="rounded-full border border-amber-400/40 bg-amber-500/10 px-2 py-[1px] text-amber-200">
+                    Duplicate
+                  </span>
+                ) : null}
+              </div>
+            )}
+            {topTerms.length ? (
+              <div className="mt-2 flex flex-wrap gap-1">
+                {topTerms.map((term) => (
+                  <span
+                    key={`${segment.id}-${term.term}`}
+                    className="rounded-full border border-cyan-400/30 bg-cyan-500/10 px-2 py-[1px] text-[10px] text-cyan-100"
+                    title={`TF-IDF weight ${term.weight.toFixed(2)}`}
+                  >
+                    {term.term}
+                  </span>
+                ))}
+              </div>
+            ) : null}
+            {exemplarPreview ? (
+              <p className="mt-2 text-[10px] text-slate-400">
+                Closest exemplar · {exemplarPreview.slice(0, 80)}
+                {exemplarPreview.length > 80 ? "…" : ""}
+              </p>
+            ) : null}
+            <div className="mt-2 space-y-1 text-[10px] text-slate-400">
+              {why.sim_to_exemplar != null ? (
+                <p>Sim to exemplar {why.sim_to_exemplar.toFixed(2)}</p>
+              ) : null}
+              {why.sim_to_nn != null ? (
+                <p>Sim to nearest {why.sim_to_nn.toFixed(2)}</p>
+              ) : null}
+            </div>
+            {neighborSummary.length ? (
+              <div className="mt-2 space-y-1 text-[10px] text-slate-400">
+                <p>Nearest neighbours</p>
+                {neighborSummary.map((neighbor) => (
+                  <p key={neighbor.id} className="text-slate-300">
+                    <span className="text-cyan-200">{neighbor.similarity.toFixed(2)}</span> · {neighbor.text}
+                  </p>
+                ))}
+              </div>
+            ) : null}
+          </>
+        ),
+        footer: contextLoading ? "Refreshing context…" : undefined,
+      };
+    },
+    [contextLoading, hoveredContext, hoveredSegmentId, neighborPreview],
+  );
 
   const overlay = useCallback((
     { points, scales: overlayScales, viewMode: overlayView, geometry }: OverlayContext<SegmentPoint>,
@@ -913,9 +1162,20 @@ const SegmentCloud = memo(function SegmentCloud({ segments, edges, hulls }: Segm
         {showParentThreads ? (
           <ResponseHullMesh hulls={hulls} viewMode={overlayView} scales={overlayScales} />
         ) : null}
+        {hoveredContext && neighborSpokeTargets.length
+          ? (
+              <NeighborSpokesMesh
+                rootId={hoveredContext.segment_id}
+                neighbors={neighborSpokeTargets}
+                segments={segmentMap}
+                viewMode={overlayView}
+                geometry={geometry}
+              />
+            )
+          : null}
       </>
     );
-  }, [edges, hulls, showEdges, showParentThreads, scales, focusedResponseId]);
+  }, [edges, hulls, showEdges, showParentThreads, scales, focusedResponseId, hoveredContext, neighborSpokeTargets]);
 
   return (
     <BaseCloud
@@ -928,8 +1188,7 @@ const SegmentCloud = memo(function SegmentCloud({ segments, edges, hulls }: Segm
       pointSize={pointSize * 0.9}
       clusterPalette={clusterPalette}
       showDensity={showDensity}
-      tooltipTitle={tooltipTitle}
-      tooltipBody={tooltipBody}
+      renderTooltip={renderTooltip}
       colorize={colorize}
       scales={scales}
       overlay={overlay}
@@ -945,6 +1204,75 @@ interface SegmentEdgesMeshProps {
   viewMode: SceneDimension;
   geometry: PreparedGeometry;
 }
+
+
+
+function useBufferAttributeUpdate(array: Float32Array | null) {
+  const attributeRef = useRef<THREE.BufferAttribute | null>(null);
+
+  useEffect(() => {
+    if (!array || !attributeRef.current) {
+      return;
+    }
+    attributeRef.current.needsUpdate = true;
+  }, [array]);
+
+  return attributeRef;
+}
+
+interface LineSegmentsPrimitiveProps {
+  positions: Float32Array;
+  color: string;
+  opacity: number;
+  depthWrite?: boolean;
+}
+
+const LineSegmentsPrimitive = memo(function LineSegmentsPrimitive({
+  positions,
+  color,
+  opacity,
+  depthWrite,
+}: LineSegmentsPrimitiveProps) {
+  const attributeRef = useBufferAttributeUpdate(positions);
+  return (
+    <lineSegments>
+      <bufferGeometry>
+        <bufferAttribute
+          ref={attributeRef}
+          attach="attributes-position"
+          count={positions.length / 3}
+          array={positions}
+          itemSize={3}
+        />
+      </bufferGeometry>
+      <lineBasicMaterial color={color} opacity={opacity} transparent depthWrite={depthWrite ?? undefined} />
+    </lineSegments>
+  );
+});
+
+interface LineLoopPrimitiveProps {
+  positions: Float32Array;
+  color: string;
+  opacity: number;
+}
+
+const LineLoopPrimitive = memo(function LineLoopPrimitive({ positions, color, opacity }: LineLoopPrimitiveProps) {
+  const attributeRef = useBufferAttributeUpdate(positions);
+  return (
+    <lineLoop>
+      <bufferGeometry>
+        <bufferAttribute
+          ref={attributeRef}
+          attach="attributes-position"
+          count={positions.length / 3}
+          array={positions}
+          itemSize={3}
+        />
+      </bufferGeometry>
+      <lineBasicMaterial color={color} opacity={opacity} transparent />
+    </lineLoop>
+  );
+});
 
 const SegmentEdgesMesh = memo(function SegmentEdgesMesh({ edges, segments, viewMode, geometry }: SegmentEdgesMeshProps) {
   const positions = useMemo(() => {
@@ -978,16 +1306,66 @@ const SegmentEdgesMesh = memo(function SegmentEdgesMesh({ edges, segments, viewM
   if (!positions) {
     return null;
   }
-  const positionBuffer = positions;
 
-  return (
-    <lineSegments>
-      <bufferGeometry>
-        <bufferAttribute attach="attributes-position" count={positionBuffer.length / 3} array={positionBuffer} itemSize={3} />
-      </bufferGeometry>
-      <lineBasicMaterial color="#38bdf8" opacity={0.12} transparent />
-    </lineSegments>
-  );
+  return <LineSegmentsPrimitive positions={positions} color="#38bdf8" opacity={0.12} />;
+});
+
+interface NeighborSpokesMeshProps {
+  rootId: string;
+  neighbors: Array<{ id: string; similarity: number }>;
+  segments: Map<string, SegmentPoint>;
+  viewMode: SceneDimension;
+  geometry: PreparedGeometry;
+}
+
+const NeighborSpokesMesh = memo(function NeighborSpokesMesh({
+  rootId,
+  neighbors,
+  segments,
+  viewMode,
+  geometry,
+}: NeighborSpokesMeshProps) {
+  const positions = useMemo(() => {
+    if (!neighbors.length || !segments.has(rootId)) {
+      return null;
+    }
+    const coords = viewMode === "3d" ? geometry.scaled3d : geometry.scaled2d;
+    const indexLookup = geometry.idToIndex;
+    const rootIndex = indexLookup.get(rootId);
+    if (rootIndex == null) {
+      return null;
+    }
+    const rootOffset = rootIndex * 3;
+    const baseX = coords[rootOffset] ?? 0;
+    const baseY = coords[rootOffset + 1] ?? 0;
+    const baseZ = coords[rootOffset + 2] ?? 0;
+    const data = new Float32Array(neighbors.length * 6);
+    let writeOffset = 0;
+    neighbors.forEach((neighbor) => {
+      const targetIndex = indexLookup.get(neighbor.id);
+      if (targetIndex == null) {
+        return;
+      }
+      const targetOffset = targetIndex * 3;
+      data[writeOffset] = baseX;
+      data[writeOffset + 1] = baseY;
+      data[writeOffset + 2] = baseZ;
+      data[writeOffset + 3] = coords[targetOffset] ?? 0;
+      data[writeOffset + 4] = coords[targetOffset + 1] ?? 0;
+      data[writeOffset + 5] = coords[targetOffset + 2] ?? 0;
+      writeOffset += 6;
+    });
+    if (writeOffset === 0) {
+      return null;
+    }
+    return writeOffset === data.length ? data : data.subarray(0, writeOffset);
+  }, [geometry, neighbors, rootId, segments, viewMode]);
+
+  if (!positions) {
+    return null;
+  }
+
+  return <LineSegmentsPrimitive positions={positions} color="#facc15" opacity={0.45} depthWrite={false} />;
 });
 
 interface ParentThreadsMeshProps {
@@ -1060,20 +1438,10 @@ const ParentThreadsMesh = memo(function ParentThreadsMesh({
   return (
     <group>
       {fadedLines.map(({ data }, index) => (
-        <lineSegments key={`faded-thread-${index}`}>
-          <bufferGeometry>
-            <bufferAttribute attach="attributes-position" count={data.length / 3} array={data} itemSize={3} />
-          </bufferGeometry>
-          <lineBasicMaterial color="#fcd34d" opacity={0.06} transparent />
-        </lineSegments>
+        <LineSegmentsPrimitive key={`faded-thread-${index}`} positions={data} color="#fcd34d" opacity={0.06} />
       ))}
       {focusedLines.map(({ data, id }) => (
-        <lineSegments key={`focused-thread-${id}`}>
-          <bufferGeometry>
-            <bufferAttribute attach="attributes-position" count={data.length / 3} array={data} itemSize={3} />
-          </bufferGeometry>
-          <lineBasicMaterial color="#fcd34d" opacity={0.28} transparent />
-        </lineSegments>
+        <LineSegmentsPrimitive key={`focused-thread-${id}`} positions={data} color="#fcd34d" opacity={0.28} />
       ))}
     </group>
   );
@@ -1123,12 +1491,7 @@ const ResponseHullMesh = memo(function ResponseHullMesh({ hulls, viewMode, scale
   return (
     <group>
       {loops.map((positions, index) => (
-        <lineLoop key={index}>
-          <bufferGeometry>
-            <bufferAttribute attach="attributes-position" count={positions.length / 3} array={positions} itemSize={3} />
-          </bufferGeometry>
-          <lineBasicMaterial color="#22d3ee" opacity={0.15} transparent />
-        </lineLoop>
+        <LineLoopPrimitive key={`response-hull-${index}`} positions={positions} color="#22d3ee" opacity={0.15} />
       ))}
     </group>
   );
@@ -1142,3 +1505,14 @@ const ResponseHullMesh = memo(function ResponseHullMesh({ hulls, viewMode, scale
 
 
 
+
+export {
+  BaseCloud,
+  derivePositionScales,
+  LineSegmentsPrimitive,
+  SegmentEdgesMesh,
+  ParentThreadsMesh,
+  ResponseHullMesh,
+};
+
+export type { CloudPoint, PreparedGeometry };
