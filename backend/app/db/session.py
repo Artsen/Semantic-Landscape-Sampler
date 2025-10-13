@@ -281,3 +281,112 @@ async def _ensure_sqlite_schema(conn) -> None:
         "CREATE UNIQUE INDEX IF NOT EXISTS ix_embedding_cache_hash_model_preproc ON embedding_cache (text_hash, model_id, preproc_version)"
     )
 
+    result = await conn.exec_driver_sql("PRAGMA table_info(projection_cache)")
+    projection_columns = {row[1] for row in result.fetchall()}
+
+    if "feature_version" not in projection_columns:
+        await conn.exec_driver_sql(
+            "ALTER TABLE projection_cache ADD COLUMN feature_version TEXT DEFAULT 'legacy-v0'"
+        )
+
+    if "params_json" not in projection_columns:
+        await conn.exec_driver_sql(
+            "ALTER TABLE projection_cache ADD COLUMN params_json TEXT DEFAULT '{}'"
+        )
+
+    if "coord_dtype" not in projection_columns:
+        await conn.exec_driver_sql(
+            "ALTER TABLE projection_cache ADD COLUMN coord_dtype TEXT DEFAULT 'float32'"
+        )
+
+    if "point_count" not in projection_columns:
+        await conn.exec_driver_sql(
+            "ALTER TABLE projection_cache ADD COLUMN point_count INTEGER DEFAULT 0"
+        )
+
+    if "total_count" not in projection_columns:
+        await conn.exec_driver_sql(
+            "ALTER TABLE projection_cache ADD COLUMN total_count INTEGER DEFAULT 0"
+        )
+
+    if "is_subsample" not in projection_columns:
+        await conn.exec_driver_sql(
+            "ALTER TABLE projection_cache ADD COLUMN is_subsample BOOLEAN DEFAULT 0"
+        )
+
+    if "subsample_strategy" not in projection_columns:
+        await conn.exec_driver_sql(
+            "ALTER TABLE projection_cache ADD COLUMN subsample_strategy TEXT"
+        )
+
+    if "coords_2d" not in projection_columns:
+        await conn.exec_driver_sql(
+            "ALTER TABLE projection_cache ADD COLUMN coords_2d BLOB"
+        )
+
+    if "coords_3d" not in projection_columns:
+        await conn.exec_driver_sql(
+            "ALTER TABLE projection_cache ADD COLUMN coords_3d BLOB"
+        )
+
+    if "response_ids_json" not in projection_columns:
+        await conn.exec_driver_sql(
+            "ALTER TABLE projection_cache ADD COLUMN response_ids_json TEXT DEFAULT '[]'"
+        )
+
+    if "trustworthiness_2d" not in projection_columns:
+        await conn.exec_driver_sql(
+            "ALTER TABLE projection_cache ADD COLUMN trustworthiness_2d FLOAT"
+        )
+
+    if "trustworthiness_3d" not in projection_columns:
+        await conn.exec_driver_sql(
+            "ALTER TABLE projection_cache ADD COLUMN trustworthiness_3d FLOAT"
+        )
+
+    if "continuity_2d" not in projection_columns:
+        await conn.exec_driver_sql(
+            "ALTER TABLE projection_cache ADD COLUMN continuity_2d FLOAT"
+        )
+
+    if "continuity_3d" not in projection_columns:
+        await conn.exec_driver_sql(
+            "ALTER TABLE projection_cache ADD COLUMN continuity_3d FLOAT"
+        )
+
+    if "warnings_json" not in projection_columns:
+        await conn.exec_driver_sql(
+            "ALTER TABLE projection_cache ADD COLUMN warnings_json TEXT"
+        )
+
+    if "created_at" not in projection_columns:
+        await conn.exec_driver_sql(
+            "ALTER TABLE projection_cache ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP"
+        )
+
+    await conn.exec_driver_sql(
+        "UPDATE projection_cache SET params_json='{}' WHERE params_json IS NULL"
+    )
+    await conn.exec_driver_sql(
+        "UPDATE projection_cache SET response_ids_json='[]' WHERE response_ids_json IS NULL"
+    )
+    await conn.exec_driver_sql(
+        "UPDATE projection_cache SET coord_dtype='float32' WHERE coord_dtype IS NULL OR coord_dtype = ''"
+    )
+    await conn.exec_driver_sql(
+        "UPDATE projection_cache SET is_subsample=0 WHERE is_subsample IS NULL"
+    )
+    await conn.exec_driver_sql(
+        "UPDATE projection_cache SET point_count=0 WHERE point_count IS NULL"
+    )
+    await conn.exec_driver_sql(
+        "UPDATE projection_cache SET total_count=0 WHERE total_count IS NULL"
+    )
+
+    await conn.exec_driver_sql(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_projection_cache_run_method_params ON projection_cache (run_id, method, params_hash, feature_version)"
+    )
+    await conn.exec_driver_sql(
+        "CREATE INDEX IF NOT EXISTS ix_projection_cache_run_method ON projection_cache (run_id, method)"
+    )
+

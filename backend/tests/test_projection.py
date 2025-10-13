@@ -1,6 +1,6 @@
 import numpy as np
 
-from app.services.projection import compute_umap, run_hdbscan
+from app.services.projection import compute_umap, compute_tsne, compute_pca_projection, run_hdbscan
 
 
 def test_compute_umap_returns_zero_for_single_point():
@@ -46,3 +46,22 @@ def test_hdbscan_computes_similarity_and_centroids():
     assert result.silhouette_scores.shape[0] == vectors.shape[0]
     for label, centroid in result.centroid_xyz.items():
         assert centroid.shape == (3,)
+
+
+
+def test_compute_tsne_shapes():
+    rng = np.random.default_rng(123)
+    data = rng.normal(size=(30, 6))
+    result = compute_tsne(data, random_state=42, perplexity=5.0, n_iter=250)
+    assert result.coords_2d.shape == (30, 2)
+    assert result.coords_3d.shape == (30, 3)
+
+
+
+def test_compute_pca_projection_handles_degenerate_matrix():
+    data = np.zeros((5, 0), dtype=float)
+    result = compute_pca_projection(data)
+    assert result.coords_2d.shape == (5, 2)
+    assert result.coords_3d.shape == (5, 3)
+    assert np.allclose(result.coords_2d, 0.0)
+    assert np.allclose(result.coords_3d, 0.0)

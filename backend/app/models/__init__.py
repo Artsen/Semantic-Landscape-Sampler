@@ -13,9 +13,11 @@ from .segment_edge import SegmentEdge
 from .response_hull import ResponseHull
 from .embedding_cache import EmbeddingCache
 from .run_provenance import RunProvenance
+from .projection_cache import ProjectionCache
 from .ann_index import AnnIndex
 from .segment_insight import SegmentInsight
 from .cluster_metrics import ClusterMetrics
+from .run_pair import RunPair, PointLink
 
 __all__ = [
     "Run",
@@ -29,8 +31,10 @@ __all__ = [
     "ResponseHull",
     "EmbeddingCache",
     "RunProvenance",
+    "ProjectionCache",
     "AnnIndex",
     "SegmentInsight",
     "ClusterMetrics",
+    "RunPair",
+    "PointLink",
 ]
-

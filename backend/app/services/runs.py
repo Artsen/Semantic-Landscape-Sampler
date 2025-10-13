@@ -14,10 +14,12 @@ import json
 import logging
 import os
 import platform
+import random
 import subprocess
 import time
 from collections import defaultdict
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional, Sequence
@@ -63,6 +65,7 @@ from app.models import (
     Run,
     RunStatus,
     RunProvenance,
+    ProjectionCache,
     AnnIndex,
     EmbeddingCache,
     SegmentInsight,
@@ -71,8 +74,11 @@ from app.models import (
 from app.schemas import RunCreateRequest, RunSummary, RunMetrics, RunUpdateRequest, SampleRequest, UMAPParams
 from app.services.openai_client import EmbeddingBatch, OpenAIService
 from app.services.projection import (
+    FEATURE_VERSION,
     build_feature_matrix,
     cluster_with_fallback,
+    compute_pca_projection,
+    compute_tsne,
     compute_umap,
     _l2_normalise,
 )
@@ -80,8 +86,40 @@ from app.services.cluster_metrics import (
     ClusterMetricsResult,
     compute_cluster_metrics,
 )
-from app.services.segmentation import SegmentDraft, flatten_drafts, make_segment_drafts
+from app.services.segmentation import SegmentDraft, make_segment_drafts
 from app.utils.text import normalise_for_embedding, compute_simhash64
+
+
+@dataclass(slots=True)
+class ResponseFeatureContext:
+    responses: list[Response]
+    response_ids: list[UUID]
+    feature_matrix: np.ndarray
+    vectors: list[np.ndarray]
+    cluster_labels: dict[UUID, int]
+    umap_coords_2d: dict[UUID, np.ndarray]
+    umap_coords_3d: dict[UUID, np.ndarray]
+
+
+@dataclass(slots=True)
+class ProjectionCachePayload:
+    method: str
+    requested_params: dict[str, Any]
+    resolved_params: dict[str, Any]
+    feature_version: str
+    coords_2d: np.ndarray
+    coords_3d: np.ndarray
+    response_ids: list[UUID]
+    warnings: list[str]
+    total_count: int
+    point_count: int
+    is_subsample: bool
+    subsample_strategy: str | None
+    trustworthiness_2d: float | None
+    trustworthiness_3d: float | None
+    continuity_2d: float | None
+    continuity_3d: float | None
+    cached_at: datetime | None = None
 from app.db.session import init_db
 
 _SETTINGS = get_settings()
@@ -133,6 +171,514 @@ class RunService:
     def __init__(self, openai_service: OpenAIService | None = None) -> None:
         self._openai = openai_service or OpenAIService()
 
+    def _normalise_projection_method(self, method: str | None) -> str:
+        if not method:
+            return "umap"
+        value = method.strip().lower()
+        if value not in {"umap", "tsne", "pca"}:
+            raise ValueError("method must be 'umap', 'tsne', or 'pca'")
+        return value
+
+    def _base_projection_params(
+        self,
+        run: Run,
+        method: str,
+        overrides: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        overrides = overrides or {}
+        method = method.lower()
+        if method == "umap":
+            n_neighbors = self._safe_int(
+                overrides.get("n_neighbors"),
+                run.umap_n_neighbors or _SETTINGS.umap_default_n_neighbors,
+            )
+            min_dist = self._safe_float(
+                overrides.get("min_dist"),
+                run.umap_min_dist if run.umap_min_dist is not None else _SETTINGS.umap_default_min_dist,
+            )
+            metric = str(overrides.get("metric", run.umap_metric or _SETTINGS.umap_default_metric)).lower()
+            seed = self._safe_int(
+                overrides.get("seed"),
+                run.umap_seed if run.umap_seed is not None else _SETTINGS.umap_default_seed,
+            )
+            return {
+                "n_neighbors": max(2, n_neighbors),
+                "min_dist": min_dist,
+                "metric": metric,
+                "seed": seed,
+            }
+        if method == "tsne":
+            perplexity = self._safe_float(overrides.get("perplexity"), 30.0)
+            learning_rate = overrides.get("learning_rate", "auto")
+            n_iter = self._safe_int(overrides.get("n_iter"), 1000)
+            early = self._safe_float(overrides.get("early_exaggeration"), 12.0)
+            seed = self._safe_int(
+                overrides.get("seed"),
+                run.umap_seed if run.umap_seed is not None else _SETTINGS.umap_default_seed,
+            )
+            metric = str(overrides.get("metric", "euclidean")).lower()
+            if isinstance(learning_rate, str) and learning_rate.strip().lower() == "auto":
+                lr_value: float | str = "auto"
+            else:
+                lr_value = self._safe_float(learning_rate, 200.0)
+            return {
+                "perplexity": max(2.0, perplexity),
+                "learning_rate": lr_value,
+                "n_iter": max(250, n_iter),
+                "early_exaggeration": max(1.0, early),
+                "seed": seed,
+                "metric": metric,
+            }
+        if method == "pca":
+            n_components = self._safe_int(overrides.get("n_components"), 50)
+            seed = self._safe_int(
+                overrides.get("seed"),
+                run.umap_seed if run.umap_seed is not None else _SETTINGS.umap_default_seed,
+            )
+            metric = str(overrides.get("metric", "euclidean")).lower()
+            return {
+                "n_components": max(3, n_components),
+                "seed": seed,
+                "metric": metric,
+            }
+        raise ValueError(f"Unsupported projection method: {method}")
+
+    def _resolve_projection_params(
+        self,
+        method: str,
+        base: dict[str, Any],
+        *,
+        sample_count: int,
+        feature_dim: int,
+    ) -> dict[str, Any]:
+        resolved = dict(base)
+        method = method.lower()
+        if method == "umap":
+            resolved["n_neighbors"] = int(max(2, resolved.get("n_neighbors", 30)))
+            resolved["min_dist"] = float(max(0.0, min(resolved.get("min_dist", 0.3), 0.99)))
+            resolved["metric"] = resolved.get("metric", "cosine")
+            resolved["seed"] = int(resolved.get("seed", _SETTINGS.umap_default_seed))
+            effective = min(
+                max(5, resolved["n_neighbors"]),
+                max(2, sample_count - 1),
+            )
+            resolved["effective_n_neighbors"] = int(effective)
+            return resolved
+        if method == "tsne":
+            resolved["seed"] = int(resolved.get("seed", _SETTINGS.umap_default_seed))
+            resolved["metric"] = resolved.get("metric", "euclidean")
+            max_perplexity = max(2.0, (sample_count - 1) / 3.0) if sample_count > 1 else 2.0
+            resolved["perplexity"] = float(min(max(2.0, resolved.get("perplexity", 30.0)), max_perplexity))
+            learning_rate = resolved.get("learning_rate", "auto")
+            if isinstance(learning_rate, str):
+                lr_lower = learning_rate.strip().lower()
+                resolved["learning_rate"] = "auto" if lr_lower == "auto" else max(10.0, self._safe_float(learning_rate, 200.0))
+            else:
+                resolved["learning_rate"] = max(10.0, float(learning_rate))
+            resolved["n_iter"] = int(max(250, resolved.get("n_iter", 1000)))
+            resolved["early_exaggeration"] = float(max(1.0, resolved.get("early_exaggeration", 12.0)))
+            return resolved
+        if method == "pca":
+            resolved["seed"] = int(resolved.get("seed", _SETTINGS.umap_default_seed))
+            resolved["metric"] = resolved.get("metric", "euclidean")
+            max_components = min(
+                resolved.get("n_components", 50),
+                sample_count,
+                feature_dim or resolved.get("n_components", 50),
+            )
+            resolved["n_components"] = int(max(3, max_components))
+            return resolved
+        raise ValueError(f"Unsupported projection method: {method}")
+
+    @staticmethod
+    def _safe_int(value: Any, default: int) -> int:
+        try:
+            return int(float(value))
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _safe_float(value: Any, default: float) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    def _hash_projection_params(self, method: str, params: dict[str, Any]) -> str:
+        payload = {
+            "method": method,
+            "params": params,
+            "feature_version": FEATURE_VERSION,
+        }
+        blob = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return hashlib.sha256(blob).hexdigest()
+
+    async def _load_response_feature_context(
+        self,
+        session,
+        run: Run,
+    ) -> ResponseFeatureContext:
+        responses_result = await session.exec(
+            select(Response)
+            .where(Response.run_id == run.id)
+            .order_by(Response.index)
+        )
+        responses = responses_result.scalars().all()
+        if not responses:
+            raise ValueError("Run has no responses")
+        response_ids = [response.id for response in responses]
+
+        embeddings_result = await session.exec(
+            select(Embedding).where(Embedding.response_id.in_(response_ids))
+        )
+        embeddings_map = {
+            embedding.response_id: embedding
+            for embedding in embeddings_result.scalars().all()
+        }
+        missing_embeddings = [rid for rid in response_ids if rid not in embeddings_map]
+        if missing_embeddings:
+            raise ValueError("Embeddings missing for responses")
+
+        vectors: list[np.ndarray] = []
+        for response in responses:
+            record = embeddings_map[response.id]
+            array = np.frombuffer(record.vector, dtype=np.float32)
+            if record.dim and record.dim > 0 and array.size >= record.dim:
+                array = array[: record.dim]
+            vectors.append(array.astype(np.float32, copy=False))
+
+        texts = [response.raw_text or "" for response in responses]
+        feature_matrix = build_feature_matrix(
+            texts,
+            vectors,
+            prompt_embedding=None,
+            keyword_axes=_SETTINGS.segment_keyword_axes,
+        )
+        feature_matrix = np.asarray(feature_matrix, dtype=np.float32)
+
+        cluster_result = await session.exec(
+            select(Cluster).where(Cluster.response_id.in_(response_ids))
+        )
+        cluster_labels: dict[UUID, int] = {}
+        for cluster in cluster_result.scalars().all():
+            try:
+                label_value = int(cluster.label) if cluster.label is not None else -1
+            except (TypeError, ValueError):
+                label_value = -1
+            cluster_labels[cluster.response_id] = label_value
+
+        projection_result = await session.exec(
+            select(Projection).where(
+                Projection.response_id.in_(response_ids),
+                Projection.method == "umap",
+            )
+        )
+        coords_2d: dict[UUID, np.ndarray] = {}
+        coords_3d: dict[UUID, np.ndarray] = {}
+        for projection in projection_result.scalars().all():
+            if projection.dim == 2:
+                coords_2d[projection.response_id] = np.array(
+                    [float(projection.x), float(projection.y)],
+                    dtype=np.float32,
+                )
+            elif projection.dim == 3:
+                coords_3d[projection.response_id] = np.array(
+                    [
+                        float(projection.x),
+                        float(projection.y),
+                        float(projection.z or 0.0),
+                    ],
+                    dtype=np.float32,
+                )
+
+        return ResponseFeatureContext(
+            responses=responses,
+            response_ids=response_ids,
+            feature_matrix=feature_matrix,
+            vectors=vectors,
+            cluster_labels=cluster_labels,
+            umap_coords_2d=coords_2d,
+            umap_coords_3d=coords_3d,
+        )
+
+    def _stratified_sample_indices(
+        self,
+        context: ResponseFeatureContext,
+        limit: int,
+        seed: int,
+    ) -> list[int]:
+        total = len(context.response_ids)
+        if total <= limit:
+            return list(range(total))
+        rng = random.Random(seed)
+        buckets: dict[int, list[int]] = defaultdict(list)
+        for index, response_id in enumerate(context.response_ids):
+            label = context.cluster_labels.get(response_id, -1)
+            buckets[label].append(index)
+        selected: list[int] = []
+        for indices in buckets.values():
+            if not indices:
+                continue
+            share = max(1, round(len(indices) / total * limit))
+            rng.shuffle(indices)
+            selected.extend(indices[:share])
+        if len(selected) > limit:
+            rng.shuffle(selected)
+            selected = selected[:limit]
+        unique_selected = sorted(set(selected))
+        if len(unique_selected) < limit:
+            remaining = [idx for idx in range(total) if idx not in unique_selected]
+            rng.shuffle(remaining)
+            needed = limit - len(unique_selected)
+            unique_selected.extend(sorted(remaining[:needed]))
+        return sorted(unique_selected[:limit])
+
+    def _extract_layout(
+        self,
+        context: ResponseFeatureContext,
+        indices: Sequence[int],
+        *,
+        dim: int,
+    ) -> np.ndarray | None:
+        source = context.umap_coords_2d if dim == 2 else context.umap_coords_3d
+        coords: list[np.ndarray] = []
+        for index in indices:
+            response_id = context.response_ids[index]
+            array = source.get(response_id)
+            if array is None:
+                return None
+            coords.append(array)
+        if not coords:
+            return None
+        return np.asarray(coords, dtype=np.float32)
+
+    async def _persist_projection_cache(
+        self,
+        session,
+        run_id: UUID,
+        payload: ProjectionCachePayload,
+        params_hash: str,
+    ) -> ProjectionCache:
+        coords_2d = np.asarray(payload.coords_2d, dtype=np.float32)
+        coords_3d = np.asarray(payload.coords_3d, dtype=np.float32)
+        await session.execute(
+            delete(ProjectionCache).where(
+                ProjectionCache.run_id == run_id,
+                ProjectionCache.method == payload.method,
+                ProjectionCache.params_hash == params_hash,
+                ProjectionCache.feature_version == payload.feature_version,
+            )
+        )
+        record = ProjectionCache(
+            run_id=run_id,
+            method=payload.method,
+            params_hash=params_hash,
+            params_json=json.dumps(
+                {
+                    "requested": payload.requested_params,
+                    "resolved": payload.resolved_params,
+                },
+                sort_keys=True,
+            ),
+            feature_version=payload.feature_version,
+            coord_dtype="float32",
+            point_count=payload.point_count,
+            total_count=payload.total_count,
+            is_subsample=payload.is_subsample,
+            subsample_strategy=payload.subsample_strategy,
+            coords_2d=coords_2d.tobytes() if coords_2d.size else None,
+            coords_3d=coords_3d.tobytes() if coords_3d.size else None,
+            response_ids_json=json.dumps([str(rid) for rid in payload.response_ids]),
+            trustworthiness_2d=payload.trustworthiness_2d,
+            trustworthiness_3d=payload.trustworthiness_3d,
+            continuity_2d=payload.continuity_2d,
+            continuity_3d=payload.continuity_3d,
+            warnings_json=json.dumps(payload.warnings),
+        )
+        session.add(record)
+        await session.commit()
+        await session.refresh(record)
+        return record
+
+    def _payload_from_cache(self, cache: ProjectionCache) -> ProjectionCachePayload:
+        raw_params = cache.params_json or "{}"
+        try:
+            params_payload = json.loads(raw_params)
+        except (TypeError, json.JSONDecodeError):
+            params_payload = {}
+        if isinstance(params_payload, dict) and "requested" in params_payload:
+            requested = params_payload.get("requested", {})
+            resolved = params_payload.get("resolved", requested)
+        else:
+            requested = params_payload if isinstance(params_payload, dict) else {}
+            resolved = requested
+        try:
+            response_ids = [UUID(value) for value in json.loads(cache.response_ids_json)]
+        except Exception:
+            response_ids = []
+        try:
+            warnings = json.loads(cache.warnings_json) if cache.warnings_json else []
+        except json.JSONDecodeError:
+            warnings = []
+        dtype = np.dtype(cache.coord_dtype or "float32")
+        coords_2d = (
+            np.frombuffer(cache.coords_2d, dtype=dtype).reshape(cache.point_count, 2)
+            if cache.coords_2d
+            else np.zeros((0, 2), dtype=np.float32)
+        )
+        coords_3d = (
+            np.frombuffer(cache.coords_3d, dtype=dtype).reshape(cache.point_count, 3)
+            if cache.coords_3d
+            else np.zeros((0, 3), dtype=np.float32)
+        )
+        payload = ProjectionCachePayload(
+            method=cache.method,
+            requested_params=requested,
+            resolved_params=resolved,
+            feature_version=cache.feature_version,
+            coords_2d=np.asarray(coords_2d, dtype=np.float32),
+            coords_3d=np.asarray(coords_3d, dtype=np.float32),
+            response_ids=response_ids,
+            warnings=warnings,
+            total_count=cache.total_count,
+            point_count=cache.point_count,
+            is_subsample=cache.is_subsample,
+            subsample_strategy=cache.subsample_strategy,
+            trustworthiness_2d=cache.trustworthiness_2d,
+            trustworthiness_3d=cache.trustworthiness_3d,
+            continuity_2d=cache.continuity_2d,
+            continuity_3d=cache.continuity_3d,
+            cached_at=cache.created_at,
+        )
+        return payload
+
+    def _maybe_tsne_preview(
+        self,
+        context: ResponseFeatureContext,
+        run: Run,
+        base_params: dict[str, Any],
+    ) -> tuple[list[int], bool, str | None, list[str]]:
+        total = len(context.response_ids)
+        threshold = getattr(_SETTINGS, "tsne_preview_threshold", 12000)
+        preview_limit = getattr(_SETTINGS, "tsne_preview_size", 10000)
+        if total <= threshold:
+            return list(range(total)), False, None, []
+        seed = base_params.get("seed") or run.umap_seed or _SETTINGS.umap_default_seed
+        indices = self._stratified_sample_indices(context, preview_limit, int(seed))
+        strategy = f"cluster-proportional-{preview_limit}"
+        warnings = [
+            f"tsne-preview:{preview_limit}",
+            f"tsne-total:{total}",
+        ]
+        return indices, True, strategy, warnings
+
+    async def get_projection_variant(
+        self,
+        session,
+        *,
+        run_id: UUID,
+        method: str | None = None,
+        params: dict[str, Any] | None = None,
+    ) -> tuple[ProjectionCachePayload, bool]:
+        run = await session.get(Run, run_id)
+        if run is None:
+            raise ValueError("Run not found")
+        method_name = self._normalise_projection_method(method)
+        base_params = self._base_projection_params(run, method_name, params)
+        params_hash = self._hash_projection_params(method_name, base_params)
+        cache_result = await session.exec(
+            select(ProjectionCache).where(
+                ProjectionCache.run_id == run_id,
+                ProjectionCache.method == method_name,
+                ProjectionCache.params_hash == params_hash,
+                ProjectionCache.feature_version == FEATURE_VERSION,
+            )
+        )
+        cache_entry = cache_result.first()
+        if cache_entry:
+            payload = self._payload_from_cache(cache_entry)
+            return payload, True
+
+        context = await self._load_response_feature_context(session, run)
+        total_count = len(context.response_ids)
+        indices = list(range(total_count))
+        is_subsample = False
+        subsample_strategy: str | None = None
+        warnings: list[str] = []
+        if method_name == "tsne":
+            indices, is_subsample, subsample_strategy, warnings = self._maybe_tsne_preview(context, run, base_params)
+
+        feature_subset = context.feature_matrix[indices, :]
+        sample_count = feature_subset.shape[0]
+        feature_dim = feature_subset.shape[1] if feature_subset.ndim == 2 else 0
+        resolved_params = self._resolve_projection_params(
+            method_name,
+            base_params,
+            sample_count=sample_count,
+            feature_dim=feature_dim,
+        )
+
+        if method_name == "umap":
+            result = compute_umap(
+                feature_subset,
+                random_state=int(resolved_params.get("seed", _SETTINGS.umap_default_seed)),
+                n_neighbors=int(resolved_params.get("effective_n_neighbors", resolved_params["n_neighbors"])),
+                min_dist=float(resolved_params["min_dist"]),
+                metric=str(resolved_params["metric"]),
+            )
+        elif method_name == "tsne":
+            init_2d = self._extract_layout(context, indices, dim=2)
+            init_3d = self._extract_layout(context, indices, dim=3)
+            result = compute_tsne(
+                feature_subset,
+                random_state=int(resolved_params.get("seed", _SETTINGS.umap_default_seed)),
+                perplexity=float(resolved_params["perplexity"]),
+                learning_rate=resolved_params["learning_rate"],
+                n_iter=int(resolved_params["n_iter"]),
+                init_2d=init_2d,
+                init_3d=init_3d,
+                early_exaggeration=float(resolved_params["early_exaggeration"]),
+                metric=str(resolved_params.get("metric", "euclidean")),
+            )
+        elif method_name == "pca":
+            result = compute_pca_projection(
+                feature_subset,
+                n_components=int(resolved_params["n_components"]),
+                metric=str(resolved_params.get("metric", "euclidean")),
+            )
+        else:
+            raise ValueError(f"Unsupported projection method: {method_name}")
+
+        coords_2d = np.asarray(result.coords_2d, dtype=np.float32)
+        coords_3d = np.asarray(result.coords_3d, dtype=np.float32)
+        response_ids = [context.response_ids[index] for index in indices]
+        payload = ProjectionCachePayload(
+            method=method_name,
+            requested_params=base_params,
+            resolved_params=resolved_params,
+            feature_version=FEATURE_VERSION,
+            coords_2d=coords_2d,
+            coords_3d=coords_3d,
+            response_ids=response_ids,
+            warnings=warnings,
+            total_count=total_count,
+            point_count=sample_count,
+            is_subsample=is_subsample,
+            subsample_strategy=subsample_strategy,
+            trustworthiness_2d=result.trustworthiness_2d,
+            trustworthiness_3d=result.trustworthiness_3d,
+            continuity_2d=result.continuity_2d,
+            continuity_3d=result.continuity_3d,
+        )
+        cache_record = await self._persist_projection_cache(
+            session,
+            run_id,
+            payload,
+            params_hash,
+        )
+        payload.cached_at = cache_record.created_at
+        return payload, False
+
     def _resolve_umap_params(
         self,
         payload: RunCreateRequest,
@@ -146,43 +692,39 @@ class RunService:
 
         umap_payload = payload.umap
 
-        n_neighbors = (
+        requested_neighbors = (
             umap_payload.n_neighbors
             if umap_payload and umap_payload.n_neighbors is not None
             else defaults["n_neighbors"]
         )
-        if n_neighbors > 200:
+        if requested_neighbors > 200:
             raise ValueError("umap.n_neighbors must be between 5 and 200")
+        if requested_neighbors < 5:
+            requested_neighbors = 5
+
         max_neighbors = max(2, payload.n - 1)
-        if max_neighbors < 2:
-            max_neighbors = 2
-        lower_bound = 5 if max_neighbors >= 5 else max_neighbors
-        if n_neighbors < lower_bound:
-            n_neighbors = lower_bound
-        if n_neighbors > max_neighbors:
+        if payload.n and requested_neighbors > max_neighbors:
             _LOGGER.warning(
-                "Clamping UMAP n_neighbors from %s to dataset maximum %s",
-                n_neighbors,
+                "Requested UMAP n_neighbors %s exceeds dataset maximum %s; layout will clamp at runtime",
+                requested_neighbors,
                 max_neighbors,
             )
-            n_neighbors = max_neighbors
-        if n_neighbors < 5 and max_neighbors < 5:
+        if payload.n and max_neighbors < 5:
             _LOGGER.warning(
                 "Dataset size %s limits UMAP n_neighbors to %s; consider sampling more responses",
                 payload.n,
-                n_neighbors,
+                max_neighbors,
             )
-        if n_neighbors < 5:
-            n_neighbors = max(2, n_neighbors)
-        if n_neighbors > 200:
-            n_neighbors = 200
-        threshold = max(1, int(0.02 * payload.n))
-        if payload.n and n_neighbors > threshold:
-            _LOGGER.warning(
-                "UMAP n_neighbors=%s exceeds 2%% of N=%s; layout may lose locality",
-                n_neighbors,
-                payload.n,
-            )
+        if payload.n:
+            threshold = max(1, int(0.02 * payload.n))
+            if requested_neighbors > threshold:
+                _LOGGER.warning(
+                    "UMAP n_neighbors=%s exceeds 2%% of N=%s; layout may lose locality",
+                    requested_neighbors,
+                    payload.n,
+                )
+
+        n_neighbors = min(200, requested_neighbors)
 
         min_dist = (
             umap_payload.min_dist
@@ -193,33 +735,24 @@ class RunService:
             raise ValueError("umap.min_dist must be between 0.0 and 0.99")
 
         metric = (
-            umap_payload.metric.lower()
-            if umap_payload and umap_payload.metric
+            umap_payload.metric
+            if umap_payload and umap_payload.metric is not None
             else defaults["metric"]
         )
-        if metric not in {"cosine", "euclidean", "manhattan"}:
-            raise ValueError("umap.metric must be one of 'cosine', 'euclidean', 'manhattan'")
+        metric = str(metric).strip().lower() or defaults["metric"]
 
-        seed_source = "default"
-        if umap_payload and umap_payload.seed is not None:
-            try:
-                seed = int(umap_payload.seed)
-            except (TypeError, ValueError) as exc:
-                raise ValueError("umap.seed must be an integer") from exc
-            seed_source = "ui"
+        seed = (
+            umap_payload.seed
+            if umap_payload and umap_payload.seed is not None
+            else payload.seed
+        )
+        if seed is None:
+            seed = defaults["seed"]
+            seed_source = "default"
         else:
-            env_seed_override = os.environ.get("UMAP_DEFAULT_SEED")
-            if env_seed_override is not None:
-                try:
-                    seed = int(env_seed_override)
-                    seed_source = "env"
-                except ValueError as exc:
-                    raise ValueError("UMAP_DEFAULT_SEED env var must be an integer") from exc
-            else:
-                seed = defaults["seed"]
+            seed_source = "ui"
 
-        return n_neighbors, float(min_dist), metric, seed, seed_source
-
+        return n_neighbors, float(min_dist), metric, int(seed), seed_source
     def _resolve_cluster_metric(self, metric: str | None) -> str:
         allowed = {"euclidean", "l1", "l2", "manhattan", "minkowski", "seuclidean", "chebyshev", "canberra", "braycurtis", "mahalanobis", "haversine"}
         if metric:
@@ -1361,6 +1894,7 @@ class RunService:
                 metadata={"responses": len(responses)},
             )
 
+    
             if options.include_segments:
                 current_stage = "segmenting-responses"
 
@@ -1376,9 +1910,15 @@ class RunService:
                         "chunk_overlap": run.chunk_overlap,
                     },
                 )
+
+                segment_drafts: list[SegmentDraft] = []
+                responses_total = max(1, len(responses))
+                segment_progress_span = 0.04
+                last_ratio = 0.0
+
                 async with telemetry.track("segment-responses"):
-                    segment_drafts = flatten_drafts(
-                        make_segment_drafts(
+                    for index, response in enumerate(responses, start=1):
+                        drafts = make_segment_drafts(
                             response.id,
                             response.index,
                             response.raw_text or "",
@@ -1389,11 +1929,39 @@ class RunService:
                                 else _SETTINGS.segment_word_overlap
                             ),
                         )
-                        for response in responses
-                    )
-                    segment_drafts = self._ensure_minimum_segments(responses, segment_drafts)
+                        segment_drafts.extend(drafts)
 
-                    total_segments = len(segment_drafts)
+                        ratio = index / responses_total
+                        if ratio - last_ratio >= 0.05 or index == responses_total:
+                            segment_percent = 0.26 + segment_progress_span * ratio
+                            await self._update_progress(
+                                session,
+                                run,
+                                stage=current_stage,
+                                message=f"Segmenting responses ({index}/{responses_total})",
+                                percent=segment_percent,
+                                metadata={
+                                    "responses_processed": index,
+                                    "responses_total": responses_total,
+                                    "segments_accumulated": len(segment_drafts),
+                                },
+                            )
+                            last_ratio = ratio
+
+                segment_drafts = self._ensure_minimum_segments(responses, segment_drafts)
+                total_segments = len(segment_drafts)
+
+                await self._update_progress(
+                    session,
+                    run,
+                    stage=current_stage,
+                    message=f"Segmented {total_segments} discourse windows",
+                    percent=0.30,
+                    metadata={
+                        "responses_total": len(responses),
+                        "segments": total_segments,
+                    },
+                )
 
                 if options.include_discourse_tags and self._openai.is_configured and segment_drafts:
                     current_stage = "tagging-discourse"
@@ -1406,11 +1974,41 @@ class RunService:
                         percent=0.32,
                         metadata={"segments": total_segments},
                     )
+
+                    tag_batch_size = max(1, min(50, total_segments))
+                    processed_segments = 0
+                    batch_count = (total_segments + tag_batch_size - 1) // tag_batch_size
+                    tag_progress_span = 0.05
+
                     async with telemetry.track("discourse-tagging"):
-                        roles = await self._openai.discourse_tag_segments([seg.text for seg in segment_drafts])
-                        for seg, role in zip(segment_drafts, roles, strict=False):
-                            if role:
-                                seg.role = role
+                        for batch_index, start_idx in enumerate(range(0, total_segments, tag_batch_size)):
+                            end_idx = min(start_idx + tag_batch_size, total_segments)
+                            batch = segment_drafts[start_idx:end_idx]
+                            roles = await self._openai.discourse_tag_segments([seg.text for seg in batch])
+                            for seg, role in zip(batch, roles, strict=False):
+                                if role:
+                                    seg.role = role
+
+                            processed_segments = end_idx
+                            ratio = processed_segments / total_segments
+                            tag_percent = min(0.37, 0.32 + tag_progress_span * ratio)
+                            await self._update_progress(
+                                session,
+                                run,
+                                stage=current_stage,
+                                message=f"Tagging discourse roles ({processed_segments}/{total_segments})",
+                                percent=tag_percent,
+                                metadata={
+                                    "segments_tagged": processed_segments,
+                                    "segments_total": total_segments,
+                                    "batch_index": batch_index + 1,
+                                    "batch_count": batch_count,
+                                },
+                            )
+
+            else:
+                segment_drafts = []
+                total_segments = 0
 
             current_stage = "embedding-responses"
 
@@ -1629,6 +2227,46 @@ class RunService:
                     n_neighbors=effective_neighbors,
                     min_dist=run.umap_min_dist,
                     metric=run.umap_metric,
+                )
+                if projection_result.trustworthiness_2d is None:
+                    projection_result.trustworthiness_2d = 1.0
+                if projection_result.trustworthiness_3d is None:
+                    projection_result.trustworthiness_3d = 1.0
+                if projection_result.continuity_2d is None:
+                    projection_result.continuity_2d = 1.0
+                if projection_result.continuity_3d is None:
+                    projection_result.continuity_3d = 1.0
+                base_params = self._base_projection_params(run, "umap")
+                resolved_params = self._resolve_projection_params(
+                    "umap",
+                    base_params,
+                    sample_count=feature_matrix.shape[0],
+                    feature_dim=feature_matrix.shape[1] if feature_matrix.ndim == 2 else 0,
+                )
+                umap_cache_payload = ProjectionCachePayload(
+                    method="umap",
+                    requested_params=base_params,
+                    resolved_params=resolved_params,
+                    feature_version=FEATURE_VERSION,
+                    coords_2d=np.asarray(projection_result.coords_2d, dtype=np.float32),
+                    coords_3d=np.asarray(projection_result.coords_3d, dtype=np.float32),
+                    response_ids=[response.id for response in responses],
+                    warnings=[],
+                    total_count=feature_matrix.shape[0],
+                    point_count=feature_matrix.shape[0],
+                    is_subsample=False,
+                    subsample_strategy=None,
+                    trustworthiness_2d=projection_result.trustworthiness_2d,
+                    trustworthiness_3d=projection_result.trustworthiness_3d,
+                    continuity_2d=projection_result.continuity_2d,
+                    continuity_3d=projection_result.continuity_3d,
+                )
+                umap_params_hash = self._hash_projection_params("umap", base_params)
+                await self._persist_projection_cache(
+                    session,
+                    run.id,
+                    umap_cache_payload,
+                    umap_params_hash,
                 )
         
                 min_cluster, min_samples = self._effective_cluster_params(
@@ -2711,6 +3349,7 @@ class RunService:
             await session.execute(delete(ResponseHull).where(ResponseHull.response_id.in_(ids)))
             await session.execute(delete(Response).where(Response.id.in_(ids)))
             await session.execute(delete(SegmentEdge).where(SegmentEdge.run_id == run_id))
+            await session.execute(delete(ProjectionCache).where(ProjectionCache.run_id == run_id))
             await session.commit()
 
 

@@ -32,6 +32,34 @@ class QualityGauge(BaseModel):
     continuity_2d: Optional[float]
     continuity_3d: Optional[float]
 
+class ProjectionMode(str, Enum):
+    BOTH = "both"
+    D2 = "2d"
+    D3 = "3d"
+
+
+class ProjectionVariantResponse(BaseModel):
+    run_id: UUID
+    method: str
+    requested_params: dict[str, Any]
+    resolved_params: dict[str, Any]
+    feature_version: str
+    point_count: int
+    total_count: int
+    is_subsample: bool
+    subsample_strategy: Optional[str] = None
+    warnings: list[str] = Field(default_factory=list)
+    response_ids: list[UUID]
+    coords_2d: Optional[list[list[float]]] = None
+    coords_3d: Optional[list[list[float]]] = None
+    trustworthiness_2d: Optional[float] = None
+    trustworthiness_3d: Optional[float] = None
+    continuity_2d: Optional[float] = None
+    continuity_3d: Optional[float] = None
+    from_cache: bool
+    cached_at: Optional[datetime] = None
+
+
 class StageTiming(BaseModel):
     name: str
     duration_ms: float
@@ -374,6 +402,7 @@ class RunResultsResponse(BaseModel):
     chunk_overlap: Optional[int] | None = None
     umap: UMAPParams
     quality: QualityGauge
+    projection_quality: Optional[dict[str, QualityGauge]] = None
     cluster_metrics: Optional[ClusterMetricsSummary] = None
     provenance: Optional[dict[str, Any]] = None
 

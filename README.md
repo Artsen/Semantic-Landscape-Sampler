@@ -1,4 +1,4 @@
-# Semantic Landscape Sampler
+﻿# Semantic Landscape Sampler
 
 [![Video Overview](./semantic-landscape-sampler.png)](./2025-09-27_17-46-43.mp4)
 
@@ -30,7 +30,8 @@ Semantic Landscape Sampler turns a single research prompt into a semantic atlas.
 - [How Is This Mapped?](#how-is-this-mapped)
 - [Roadmap & Next Steps](#roadmap--next-steps)
 - [Contributing](#contributing)
-- [Rendering Pipeline (Mermaid)](#rendering-pipeline-mermaid)
+- [Mermaid Diagrams](#mermaid-diagrams)
+  - [Rendering Pipeline (Mermaid)](#rendering-pipeline-mermaid)
 
 ## Overview
 
@@ -38,29 +39,31 @@ Semantic Landscape Sampler is built for rapid sense-making of large language mod
 
 ## What's New
 
-- **Embedding cache with duplicate tracking**: Normalise text (NFKC + whitespace collapse), hash it, and reuse vectors across runs while still logging duplicate segments when cache is disabled. Cached vectors store dtype, norm, provider, and revision metadata.
-- **Processing timeline telemetry**: Each sampling run now records total runtime and per-stage durations (LLM call, segmentation, embeddings, clustering, ANN build, persistence). The UI surfaces the totals via badges and a timeline panel, and metrics/exports include the breakdown.
+- **Compare runs visual analytics**: Align two runs via Procrustes (shared hashes, centroid, or NN fallback), inspect side-by-side or overlay point clouds, review movement metrics, histograms, and cluster theme shifts. The Compare view now embeds the full PointCloudScene so you can orbit in 3D, flip to 2D, and toggle density meshes, similarity edges, parent threads, and hull overlays exactly like the explorer.
+- **Embedding cache with duplicate tracking**: Normalise text (NFKC plus whitespace collapse), hash it, and reuse vectors across runs while still logging duplicate segments when the cache is disabled. Cached vectors store dtype, norm, provider, and revision metadata.
+- **Processing breakdown telemetry**: Each sampling run records total runtime and per-stage durations (LLM call, segmentation, embeddings, clustering, ANN build, persistence). The UI surfaces the totals via badges and a breakdown donut, and metrics/exports include the breakdown.
+- **Workspace layout refresh**: A new top bar, navigation rail, slide-over drawers, and status footer keep the canvas centered while power controls live in focused surfaces.
 - **UMAP control presets and quality gauges**: Configure neighbours, min-dist, metric, and seeds from the UI with guardrails. Trustworthiness and continuity gauges show how faithful the 2D/3D projections are for each run.
 - **Run provenance**: Every run records Python, Node, BLAS/OpenMP, library versions, feature weights, seeds, and commit SHA. Provenance is embedded in exports and surfaced in the UI.
-- **Approximate nearest-neighbour graph**: Build Annoy (with hnswlib/FAISS fallbacks) indices on blended feature vectors, optionally PCA-compressed. Toggle between full and simplified (mutual-k, MST + bridges) edge graphs in the viewer.
+- **Approximate nearest-neighbour graph**: Build Annoy (with hnswlib/FAISS fallbacks) indices on blended feature vectors, optionally PCA-compressed. Toggle between full and simplified (mutual-k, MST plus bridges) edge graphs in the viewer.
 - **Enriched tooltips and neighbour context**: Segment insights precompute TF-IDF top terms, exemplar medoids, neighbour previews, and similarity metrics so hover cards and detail drawers explain why a point sits where it does.
 - **Fine-grained exports**: Stream run/cluster/selection/viewport exports in CSV/JSON/JSONL/Parquet with schema versions and optional provenance/vectors included.
-- **Cluster tuning & metrics**: Adjust HDBSCAN parameters after a run, review silhouette (embedding + feature space), Davies-Bouldin, Calinski-Harabasz, and per-cluster stability charts.
-- **UI polish**: Shared spread/centering keeps hulls, edges, and density meshes aligned; run history drawer, notes, duplicate filters, simplified edge toggle, neighbour "octopus" spokes, and cache badges make navigation quicker.
+- **Cluster tuning and metrics**: Adjust HDBSCAN parameters after a run, review silhouette (embedding and feature space), Davies-Bouldin, Calinski-Harabasz, and per-cluster stability charts.
+- **UI polish and controls refresh**: The controls panel is now grouped into expandable sections (Run Setup, Projection/Layout, Visibility, Shortcuts, Export, Cluster Tuning) with rerun versus instant badges, a scrollable sidebar, and restored toggles for system prompts, UMAP knobs, segmentation, edges, roles, exports, and clustering.
 
 ## Plain-English Tour
 
 Think of the app as building a living map of ideas. Here is the journey without jargon:
 
-1. **Ask a question**. You provide a prompt, optional system message, and choose how many completions to request. A jitter token can perturb prompts for additional variety.
-2. **Gather answers**. The backend fans out to the selected OpenAI chat model, respecting temperature, top-p, seed, and max-token settings, and records raw responses plus usage stats.
-3. **Break answers into pieces**. Sentences (optionally tagged with discourse roles) become segments so you can zoom from responses to clause-level insights.
-4. **Describe each piece with numbers**. For every response and segment we blend OpenAI embeddings, TF-IDF fingerprints, prompt-similarity signals, and lightweight stats. The embedding cache deduplicates identical text across runs while logging duplicates within a run when the cache is off.
-5. **Compress to coordinates**. UMAP, using the seed and parameters you chose, produces paired 3D and 2D layouts. Trustworthiness/continuity metrics quantify projection fidelity.
-6. **Find structure**. HDBSCAN groups items; when it struggles, we fall back to KMeans. We compute soft memberships, outlier scores, centroids, keywords, and bootstrap stability. An ANN index gives us fast neighbour graphs and simplified edge nets.
-7. **Persist everything**. Responses, segments, embeddings, projections, clusters, ANN metadata, hulls, edges, insights, and provenance are stored in SQLite (with WAL tuning).
-8. **Explore visually**. The React viewer renders the point cloud plus hulls, density, parent threads, simplified edges, and neighbour spokes. Hovering shows top terms and neighbour previews, the side drawer reveals raw text and metrics, and legends toggle clusters, roles, outliers, cached badges, and duplicates.
-9. **Export exactly what you need**. Any run, cluster, lasso selection, or viewport can be streamed as CSV/JSON/JSONL/Parquet with optional provenance and vector slices, ready for notebooks or dashboards.
+1. **Ask a question.** Provide a prompt, optional system message, and choose how many completions to request. A jitter token can perturb prompts for additional variety.
+2. **Gather answers.** The backend fans out to the selected OpenAI chat model, respecting temperature, top-p, seed, and max-token settings, and records raw responses plus usage stats.
+3. **Break answers into pieces.** Sentences (optionally tagged with discourse roles) become segments so you can zoom from responses to clause-level insights.
+4. **Describe each piece with numbers.** For every response and segment we blend OpenAI embeddings, TF-IDF fingerprints, prompt-similarity signals, and lightweight stats. The embedding cache deduplicates identical text across runs while logging duplicates within a run when the cache is off.
+5. **Compress to coordinates.** UMAP, using the seed and parameters you chose, produces paired 3D and 2D layouts. Trustworthiness and continuity metrics quantify projection fidelity.
+6. **Find structure.** HDBSCAN groups items; when it struggles we fall back to KMeans. We compute soft memberships, outlier scores, centroids, keywords, and bootstrap stability. An ANN index gives us fast neighbour graphs and simplified edge nets.
+7. **Persist everything.** Responses, segments, embeddings, projections, clusters, ANN metadata, hulls, edges, insights, and provenance are stored in SQLite (with WAL tuning).
+8. **Explore visually.** The React viewer renders the point cloud plus hulls, density, parent threads, simplified edges, and neighbour spokes. Hovering shows top terms and neighbour previews, the side drawer reveals raw text and metrics, and legends toggle clusters, roles, outliers, cache badges, and duplicates.
+9. **Export exactly what you need.** Any run, cluster, lasso selection, or viewport can be streamed as CSV/JSON/JSONL/Parquet with optional provenance and vector slices, ready for notebooks or dashboards.
 
 If you remember only one thing: meaning lives in who is near whom. Axis labels are meaningless; proximity, clusters, hulls, and edges tell the story.
 
@@ -70,27 +73,27 @@ If you remember only one thing: meaning lives in who is near whom. Axis labels a
 .
 +-- README.md                     # This guide
 +-- backend/                      # FastAPI + SQLModel backend
-¦   +-- app/
-¦   ¦   +-- api/                  # FastAPI routers
-¦   ¦   +-- core/                 # Settings
-¦   ¦   +-- db/                   # Engine + migrations
-¦   ¦   +-- models/               # SQLModel tables (runs, segments, cache, ANN, provenance)
-¦   ¦   +-- schemas/              # Pydantic response/request models
-¦   ¦   +-- services/             # Sampling, embeddings, projection, ANN, exports
-¦   ¦   +-- utils/                # Text normalisation, token counting, pricing helpers
-¦   +-- data/                     # SQLite db + persisted ANN indexes
-¦   +-- tests/                    # Pytest suite with OpenAI mocks & golden files
-¦   +-- requirements.txt          # Backend dependencies
-¦   +-- pyproject.toml            # Ruff/Black tooling config
+|   +-- app/
+|   |   +-- api/                  # FastAPI routers
+|   |   +-- core/                 # Settings
+|   |   +-- db/                   # Engine + migrations
+|   |   +-- models/               # SQLModel tables (runs, segments, cache, ANN, provenance)
+|   |   +-- schemas/              # Pydantic response/request models
+|   |   +-- services/             # Sampling, embeddings, projection, ANN, exports
+|   |   +-- utils/                # Text normalisation, token counting, pricing helpers
+|   +-- data/                     # SQLite db + persisted ANN indexes
+|   +-- tests/                    # Pytest suite with OpenAI mocks & golden files
+|   +-- requirements.txt          # Backend dependencies
+|   +-- pyproject.toml            # Ruff/Black tooling config
 +-- frontend/                     # React + Vite + Tailwind client
-¦   +-- src/
-¦   ¦   +-- components/           # Controls, scene, panels, legends, history drawer
-¦   ¦   +-- hooks/                # useRunWorkflow, segment context fetching
-¦   ¦   +-- services/             # REST client wrapped with zod schemas
-¦   ¦   +-- store/                # Zustand store + tests
-¦   ¦   +-- types/                # Shared run/segment types mirroring backend
-¦   +-- package.json              # Frontend dependencies & scripts
-¦   +-- pnpm-lock.yaml            # Locked dependency graph
+|   +-- src/
+|   |   +-- components/           # Controls, scene, panels, legends, history drawer
+|   |   +-- hooks/                # useRunWorkflow, segment context fetching
+|   |   +-- services/             # REST client wrapped with zod schemas
+|   |   +-- store/                # Zustand store + tests
+|   |   +-- types/                # Shared run/segment types mirroring backend
+|   +-- package.json              # Frontend dependencies & scripts
+|   +-- pnpm-lock.yaml            # Locked dependency graph
 +-- CHANGELOG.md                  # Release notes
 +-- CONTRIBUTING.md               # Contribution guidelines
 +-- CODE_OF_CONDUCT.md            # Community expectations
@@ -103,22 +106,24 @@ If you remember only one thing: meaning lives in who is near whom. Axis labels a
 ## Key Capabilities
 
 ### Backend
+
 - **Sampling orchestration**: `RunService` coordinates OpenAI chat completions, segmentation, embeddings, clustering, ANN building, hull generation, and persistence while streaming progress updates.
 - **Embedding cache**: Normalises text (trim, whitespace collapse, NFKC, casefold), hashes content, and stores float16 vectors plus norms and metadata. Cache hits skip API calls; misses populate the cache. Cache opt-out still writes vectors and flags duplicates observed within a run.
 - **Processing telemetry**: Captures per-stage timings (LLM sampling, segmentation, embeddings, UMAP, clustering, ANN build, persistence) and persists them for API clients.
 - **Blended feature space**: Combines semantic embeddings, TF-IDF, prompt similarity, and statistics. Feature weights are recorded in provenance for reproducibility.
-- **Projection & clustering**: UMAP generates 3D + 2D layouts with seeded determinism. HDBSCAN (with KMeans fallback) delivers soft memberships, probabilities, centroid similarities, silhouette/outlier scores, and optional parameter sweeps.
-- **Quality metrics**: Trustworthiness/continuity (2D + 3D), silhouette (embedding + feature space), Davies-Bouldin, Calinski-Harabasz, and per-cluster stability summaries.
+- **Projection and clustering**: UMAP generates 3D + 2D layouts with seeded determinism. HDBSCAN (with KMeans fallback) delivers soft memberships, probabilities, centroid similarities, silhouette/outlier scores, and optional parameter sweeps.
+- **Quality metrics**: Trustworthiness/continuity (2D + 3D), silhouette (embedding and feature space), Davies-Bouldin, Calinski-Harabasz, and per-cluster stability summaries.
 - **ANN graphs**: Builds Annoy indexes (optional PCA to 64/128 dims) with hnswlib/FAISS fallbacks, stores metadata in SQLite, serialises indices to disk, and exposes full or simplified graphs plus neighbour queries.
 - **Segment insights**: Precomputes TF-IDF top terms, neighbour lists, medoid exemplars, and similarity explanations for tooltip/detail UX.
-- **Exports & provenance**: Streams run/cluster/selection/viewport exports in multiple formats with schema versioning and optional provenance/vectors. All runs store provenance including library versions, seeds, hardware hints, and commit SHA.
+- **Exports and provenance**: Streams run/cluster/selection/viewport exports in multiple formats with schema versioning and optional provenance/vectors. All runs store provenance including library versions, seeds, hardware hints, and commit SHA.
 
 ### Frontend
+
 - **State management**: Zustand store with selectors for view mode (2D/3D), level mode (responses/segments), cache badges, duplicates, role filters, outlier highlighting, and spread/density adjustments.
 - **Controls panel**: Prompt, system message, jitter token, sampling count, temperature/top-p, seed/max tokens, chunk sizing, embedding model, cache toggle, UMAP preset dropdown, trustworthiness/continuity gauges, cluster tuning sliders, ANN graph toggles (full vs simplified, k value), duplicate filter, neighbour spokes toggle, and export actions.
 - **Visual analytics**: React-three-fiber scene renders point cloud with shared spread/centering for hulls, edges, density, and parent threads. Hovering shows enriched tooltips; lasso selects segments/responses; duplicates and cache hits surface badges.
-- **Context panels**: Detail drawer summarises metrics, top terms, neighbours, and parent responses. Metadata bar shows model choices, cache hit rate, quality gauges, cost estimates, and notes editor. Run history drawer lists recent runs with provenance and quick-load actions.
-- **Processing timeline**: Metadata bar surfaces total runtime and badges show stage breakdowns; a dedicated timeline panel visualises per-stage durations.
+- **Context panels**: Detail drawer summarises metrics, top terms, neighbours, and parent responses. The metadata bar shows model choices, cache hit rate, quality gauges, cost estimates, notes editor, and processing breakdown badges. The run history drawer lists recent runs with provenance and quick-load actions.
+- **Processing breakdown**: Metadata surfaces total runtime and per-stage durations; the breakdown donut visualises each stage breakdown.
 - **Run workflow**: `useRunWorkflow` handles run creation, sampling, polling, metrics, provenance, graph, neighbour context, and incremental cluster recomputes while keeping UI responsive.
 
 ## Architecture
@@ -137,10 +142,9 @@ Key data flow highlights:
 - Node.js 20+ (Corepack-enabled)
 - pnpm 9+
 - SQLite (bundled with Python)
-- An OpenAI API key with access to the chosen chat + embedding models
+- OpenAI API key with access to the chosen chat and embedding models
 
-Optional:
-- FAISS GPU/CPU builds if you prefer FAISS over Annoy/HNSW (install separately)
+Optional: FAISS GPU/CPU builds if you prefer FAISS over Annoy/HNSW (install separately).
 
 ## Environment Configuration
 
@@ -174,7 +178,7 @@ pnpm install
 pnpm dev  # http://localhost:5173, proxies backend on :8000
 ```
 
-Vitest + React Testing Library are configured for store/component tests. `pnpm test -- --run` executes the suite in CI-compatible mode.
+Vitest and React Testing Library are configured for store/component tests. `pnpm test -- --run` executes the suite in CI-compatible mode.
 
 ## Running the Stack
 
@@ -187,41 +191,60 @@ Vitest + React Testing Library are configured for store/component tests. `pnpm t
 
 ### Controls Reference
 
-- **Prompt & System Message**: Define the question and tone for completions.
-- **Sampling Count / Temperature / Top-p / Seed / Max Tokens**: Tune generation diversity.
-- **Discourse Segmentation**: Set chunk size/overlap and enable/disable role tagging.
-- **Embedding Model & Cache Toggle**: Choose `text-embedding-3-large` (default) or fallback models; toggling cache off still logs duplicates.
-- **UMAP Presets**: "Tight Clusters" (n=15, min_dist=0.05, cosine), "Balanced" (n=30, min_dist=0.3), "Global Structure" (n=100, min_dist=0.6). Manual overrides available with guardrails.
-- **Quality Gauges**: Trustworthiness/continuity for 2D and 3D projections.
-- **Processing Timeline**: View total runtime and per-stage durations (LLM sampling, segmentation, embeddings, ANN, persistence) via badges and the timeline panel.
-- **Cluster Tuning**: `min_cluster_size`, `min_samples`, and algo selection (HDBSCAN/KMeans) with live recompute.
-- **ANN Graph**: Toggle simplified edges, adjust k-range, control neighbour spokes on hover, switch density overlays.
-- **Role / Response vs Segment / Cached vs New / Duplicates**: Filter by actor, granularity, cache status, or duplicates.
-- **Notes & Provenance**: Edit notes inline; review provenance JSON via the dedicated panel.
-- **Exports**: Run-, cluster-, selection-, or viewport-scoped exports with optional provenance/vectors and format choice.
+- **Top bar**: Run title, Saved runs, Run setup, Export, Share (placeholder), Notes, Layers, Theme toggle, and the Cmd+K command palette entry.
+- **Navigation rail**: Explore / Run Setup / Cluster Tuning / Compare / Layers / History / Export icons collapse to 72px, expand on hover, and expose shortcuts (E, R, T, C, L, H, X).
+- **Command palette (Cmd+K)**: Search actions like Generate landscape, Open export panel, Toggle density/edges/parent threads, or jump to inspector tabs and saved runs; Enter executes the highlighted command.
+- **Inspector tabs**: Selection (search, multi-select actions, quick exports), Analytics (projection quality gauges, clustering metrics), History (notes editor with autosave guard, provenance copy helper).
+- **Layers popover**: Toggle density, similarity edges, parent threads, neighbour spokes, or duplicates-only mode and adjust the cosine edge threshold slider without leaving the canvas.
+- **Run setup modal**: Tabs for Prompt/System, Sampling, Segmentation, Embeddings, Safeguards, and Review; regenerates runs with the latest parameters.
+- **Cluster tuning modal**: Switch HDBSCAN/KMeans, adjust minimum cluster size/samples, and apply recomputes without re-calling the LLM.
+- **Export panel**: Choose scope (run / cluster / selection / viewport), dataset (responses / segments), format (JSON / JSONL / CSV / Parquet), and includes (provenance, vectors, metadata) before downloading.
+- **Keyboard shortcuts**: Cmd/Ctrl+K opens the palette; Shift+D toggles density, Shift+E toggles edges, Shift+P toggles parent threads, Shift+F toggles performance stats.
+
+
+### Navigation Pages
+
+- **Explore**: Primary point cloud with response/segment toggle, inspector tabs (Selection, Analytics, History), processing telemetry footer, and command palette access for quick actions.
+- **Run Setup**: Slide-over that captures prompt, system message, sampling counts, segmentation strategy, embedding model, safeguards, and review summary before launching a run.
+- **Cluster Tuning**: Retune clustering and projection parameters without re-sampling; view live quality gauges and apply HDBSCAN or KMeans changes instantly.
+- **Compare**: Side-by-side control deck plus interactive point-cloud scene, overlay/side-by-side toggles, movement vectors, diff metrics, and export persistence for aligned runs.
+- **Layers**: Popover of overlay toggles (density, edges, parent threads, neighbour spokes, duplicates-only) and the similarity-threshold slider that updates the canvas in place.
+- **History**: Drawer listing recent runs with notes, metrics snapshots, provenance metadata, and quick actions to reload or copy identifiers.
+- **Export**: Dedicated wizard for selecting dataset scope, format, schema extras (provenance/vectors), and initiating downloads.
+
 
 ### Exploration Tips
 
 - Hover to reveal top TF-IDF terms, nearest neighbours (with similarity), and "why here" metrics.
-- Review the Processing Timeline panel to understand which stages dominated runtime and to spot bottlenecks.
-- Use the octopus spokes toggle to visualise nearest neighbours of the hovered point.
+- Review the processing breakdown to understand which stages dominated runtime and to spot bottlenecks.
+- Use the neighbour spokes toggle to visualise nearest neighbours of the hovered point.
 - Lasso select outliers or clusters, then export the selection for deep dives.
-- Switch between responses and segments to see macro vs micro structure.
+- Switch between responses and segments to see macro versus micro structure.
+- Bookmark runs: once a landscape loads the URL gains `?run=<id>` so refreshes and shared links reopen the same run.
 - The history drawer keeps recent runs (with notes, metrics, provenance) a click away.
+
+### Compare Runs
+
+- Open the Compare view from the navigation rail to select two runs and align them automatically.
+- Toggle between side-by-side and overlay layouts to inspect raw versus aligned layouts; movement vectors highlight how shared points shift.
+- Scroll through the interactive point-cloud panel to orbit, pan, lasso, and flip between 2D/3D while density, edges, parent threads, and hull overlays stay in sync with the main explorer.
+- Use filters to focus on shared hashes, adjust the movement threshold, or simplify the link set.
+- The metrics panel surfaces ARI/NMI, movement statistics, histogram bins, cluster deltas, and top-term drift per matching cluster.
 
 ## Data Model & Persistence
 
 The SQLite schema tracks:
-- `runs`: Prompt, sampling params, cache flag, embedding model, UMAP + cluster settings, trustworthiness/continuity, timing telemetry (`processing_time_ms`, `timings_json`), notes, status, progress, provenance linkage.
+
+- `runs`: Prompt, sampling params, cache flag, embedding model, UMAP and cluster settings, trustworthiness/continuity, timing telemetry (`processing_time_ms`, `timings_json`), notes, status, progress, provenance linkage.
 - `responses` and `response_segments`: Raw text, tokens, roles, blended embeddings, projections 3D/2D, cluster metadata, cache flags (`is_cached`, `is_duplicate`), hashes, simhash64, insight linkage.
 - `embeddings`, `projections`, `clusters`, `segment_edges`, `response_hulls`: Layout artefacts and overlays.
 - `embedding_cache`: Normalised text hash, vector bytes/dtype/norm, provider, revision, preproc version.
 - `segment_insights`: Precomputed top terms, neighbours, exemplar IDs, metric JSON.
 - `ann_index`: Method, params, vector count, persisted index path per run.
-- `run_provenance`: Runtime + dependency metadata, feature weights, cluster/UMAP params, commit SHA, env label.
-- `cluster_metrics`: Silhouettes (feature + embedding), Davies-Bouldin, Calinski-Harabasz, cluster counts, stability summaries.
+- `run_provenance`: Runtime and dependency metadata, feature weights, cluster/UMAP params, commit SHA, env label.
+- `cluster_metrics`: Silhouettes (feature and embedding space), Davies-Bouldin, Calinski-Harabasz, cluster counts, stability summaries.
 
-All inserts run inside transactions and leverage WAL mode for concurrency. PRAGMAs (`journal_mode=WAL`, `synchronous=NORMAL`, `mmap_size=268435456`) are applied on startup.
+All inserts run inside transactions and leverage WAL mode for concurrency. PRAGMAs (`journal_mode=WAL`, `synchronous=NORMAL`, `mmap_size=268435456`) apply on startup.
 
 ## API Endpoints
 
@@ -231,12 +254,13 @@ All inserts run inside transactions and leverage WAL mode for concurrency. PRAGM
 | `/run` | `GET` | List recent runs with summary metrics, cache stats, and history metadata. |
 | `/run/{id}` | `GET` | Fetch run configuration and status. |
 | `/run/{id}` | `PATCH` | Update run notes. |
-| `/run/{id}/sample` | `POST` | Trigger sampling + pipeline execution (responses, segments, embeddings, ANN, clustering, insights). |
+| `/run/{id}/sample` | `POST` | Trigger sampling plus pipeline execution (responses, segments, embeddings, ANN, clustering, insights). |
+| `/compare` | `POST` | Align two runs (shared hashes, centroid fallback, or feature NN) and return aligned points, links, and metrics. |
 | `/run/{id}/results` | `GET` | Retrieve full run payload (responses, segments, projections, clusters, edges, hulls, insights, usage). |
 | `/run/{id}/metrics` | `GET` | Cache hit rate, duplicate counts, silhouette, Davies-Bouldin, Calinski-Harabasz, cluster counts, and per-stage processing durations. |
 | `/run/{id}/provenance` | `GET` | Full provenance record for reproducibility. |
 | `/run/{id}/graph` | `GET` | k-NN graph (full or simplified) driven by the ANN index. |
-| `/run/{id}/neighbors` | `GET` | Retrieve nearest neighbours for a response/segment. |
+| `/run/{id}/neighbors` | `GET` | Retrieve nearest neighbours for a response or segment. |
 | `/segments/{id}/context` | `GET` | Return segment insights (top terms, neighbours, exemplar, similarity metrics). |
 | `/run/{id}/export` | `GET` | Stream exports scoped to run/cluster/selection/viewport in CSV/JSON/JSONL/Parquet with optional provenance/vectors. |
 
@@ -245,13 +269,15 @@ All endpoints return JSON; exports stream file responses. API contracts are docu
 ## Testing & Quality Gates
 
 ### Backend
+
 - `pytest` with async fixtures mocking OpenAI chat/embedding responses.
 - Golden files cover projection determinism, ANN graph stability, and export schemas.
 - Cache behaviour tests assert hits, misses, re-embedding guards, duplicate tagging, and cross-platform hash determinism.
 - Cluster metric tests validate silhouette/DBI/CHI calculations and recompute flows.
 
 ### Frontend
-- `pnpm lint` for ESLint + Prettier.
+
+- `pnpm lint` for ESLint and Prettier.
 - `pnpm test -- --run` runs Vitest suites (Zustand store logic, workflow hooks, components with Testing Library).
 - Snapshot tests ensure control presets, history drawer, and tooltip context renderings remain stable.
 
@@ -262,9 +288,7 @@ CI (GitHub Actions) runs lint/format/test for both stacks. Mocked OpenAI fixture
 With the backend running:
 
 ```bash
-curl -X POST http://localhost:8000/run \
-  -H 'Content-Type: application/json' \
-  -d '{
+curl -X POST http://localhost:8000/run   -H 'Content-Type: application/json'   -d '{
         "prompt": "How will climate change reshape coastal cities?",
         "n": 25,
         "model": "gpt-4.1-mini",
@@ -286,13 +310,13 @@ Use `/run/<run_id>/metrics` for cache hit rates and clustering metrics, `/run/<r
 
 ## How Is This Mapped?
 
-1. Collect prompt + completions, estimate tokens/cost (with cached-token adjustment).
+1. Collect prompt and completions, estimate tokens/cost (with cached-token adjustment).
 2. Segment responses, optionally annotate discourse roles.
 3. Normalise text, hash content, and look up cached embeddings before hitting the API.
-4. Blend embedding + TF-IDF + similarity + stats into a feature matrix.
+4. Blend embedding plus TF-IDF plus similarity plus stats into a feature matrix.
 5. L2-normalise features, optionally PCA-reduce for ANN.
-6. Run UMAP (3D + 2D with shared centering/spread) and record trustworthiness/continuity.
-7. Cluster with HDBSCAN (soft membership, outlier scores, centroid sims) or fallback to KMeans.
+6. Run UMAP (3D plus 2D with shared centering/spread) and record trustworthiness/continuity.
+7. Cluster with HDBSCAN (soft membership, outlier scores, centroid similarities) or fall back to KMeans.
 8. Build similarity edges, parent threads, response hulls, ANN index, and segment insights.
 9. Persist everything, update provenance, and compute cluster metrics.
 10. Hydrate the frontend via `GET /run/{id}/results`, `.../metrics`, `.../graph`, and `.../context`.
@@ -300,7 +324,7 @@ Use `/run/<run_id>/metrics` for cache hit rates and clustering metrics, `/run/<r
 ## Roadmap & Next Steps
 
 - Wire pnpm tooling into the shared CLI image so Vitest can run from scripts and CI without manual setup.
-- Publish a short guide on the existing OpenAI mocking fixtures, including usage patterns and sample tests.
+- Publish a concise guide on the existing OpenAI mocking fixtures, including usage patterns and sample tests.
 - Address react-three-fiber TypeScript typing warnings (either upgrade types or add focused suppressions).
 - Follow the README roadmap (model comparison overlays, automated topic labelling) once the sampling pipeline stabilises.
 
@@ -313,19 +337,25 @@ Issues and pull requests are welcome. Please read [CONTRIBUTING.md](./CONTRIBUTI
 ### Rendering Pipeline
 ```mermaid
 flowchart TD
-    U["User adjusts parameters\n& clicks Generate"] --> CP["ControlsPanel\n(UI events)"]
-    CP --> RS["Zustand runStore\n(state mutations)"]
+    U["User adjusts parameters
+& clicks Generate"] --> CP["ControlsPanel
+(UI events)"]
+    CP --> RS["Zustand runStore
+(state mutations)"]
     RS -->|"POST /run"| API_Run["FastAPI /run endpoint"]
 
     subgraph BackendSampling
         API_Run --> RunCreate["RunService.create_run"]
-        RunCreate -->|"SQLModel insert"| DB[("SQLite\nruns table")]
-        RunCreate --> Prov["Record provenance\n(lib versions, seeds)"]
+        RunCreate -->|"SQLModel insert"| DB[("SQLite
+runs table")]
+        RunCreate --> Prov["Record provenance
+(lib versions, seeds)"]
 
         RS -->|"POST /run/{id}/sample"| API_Sample["FastAPI /run/{id}/sample"]
         API_Sample --> Runner["RunService.sample_run"]
         Runner --> Chat["OpenAI Chat Completions"]
-        Runner --> Segmenter["Sentence & discourse\nsegmentation"]
+        Runner --> Segmenter["Sentence & discourse
+segmentation"]
         Segmenter --> CachePrep["Normalise + hash text"]
         CachePrep -->|hit| CacheReuse["Reuse cached embedding"]
         CachePrep -->|miss| EmbedCall["OpenAI embeddings"]
@@ -333,15 +363,18 @@ flowchart TD
         CacheReuse --> Blend["Blend embedding + TF-IDF + stats"]
         CacheWrite --> Blend
         Blend --> FeatureNorm["Unit-normalise + optional PCA"]
-        FeatureNorm --> UMAP3d2d["UMAP 3D & 2D\n(seed aware)"]
+        FeatureNorm --> UMAP3d2d["UMAP 3D & 2D
+(seed aware)"]
         UMAP3d2d --> Quality["Trustworthiness / continuity"]
         FeatureNorm --> Cluster["HDBSCAN (fallback KMeans)"]
-        Cluster --> ClusterMetrics["Silhouettes + stability\nDavies-Bouldin / CH"]
+        Cluster --> ClusterMetrics["Silhouettes + stability
+Davies-Bouldin / CH"]
         FeatureNorm --> ANNBuild["ANN index (Annoy/HNSW/FAISS)"]
         Segmenter --> Threads["Parent thread builder"]
         Blend --> Similarity["kNN edges + mutual graph"]
         Segmenter --> Hulls["Convex hull generator"]
-        Blend --> InsightPrep["Segment insights\n(top terms, neighbours)"]
+        Blend --> InsightPrep["Segment insights
+(top terms, neighbours)"]
 
         Chat --> Persist["Persist artefacts"]
         Segmenter --> Persist
@@ -354,7 +387,8 @@ flowchart TD
         InsightPrep --> Persist
         ClusterMetrics --> Persist
         Quality --> UpdateRun["Update run gauges"]
-        Persist --> Done["Run status\n= completed"]
+        Persist --> Done["Run status
+= completed"]
     end
 
     RS -->|"GET /run/{id}/results"| API_Results["FastAPI /run/{id}/results"]
@@ -382,7 +416,8 @@ flowchart TD
 
     subgraph SceneLayer
         Scene0 --> BaseGeom["BaseCloud geometry prep"]
-        BaseGeom --> Buffers["Typed arrays\n(positions/colors)"]
+        BaseGeom --> Buffers["Typed arrays
+(positions/colors)"]
         BaseGeom --> Spread["Shared spread + centering"]
         Spread --> Points["Three.js points"]
         Spread --> Density["Density mesh"]
@@ -408,7 +443,8 @@ flowchart TD
     API_List --> RunList["list_recent_runs"]
     RunList --> DB
     History --> RS
-    Workflow --> StorePersist["Persist UI state\n(zustand/persist)"]
+    Workflow --> StorePersist["Persist UI state
+(zustand/persist)"]
     StorePersist --> ControlsPanel
 ```
 
@@ -615,7 +651,7 @@ classDiagram
     }
 
     class OpenAIService {
-      +sample_chat(prompt, n, model, seed,...)
+      +sample_chat(prompt, n, model, seed, ...)
       +embed_texts(texts, model)
       +discourse_tag_segments(texts)
     }
@@ -759,7 +795,7 @@ sequenceDiagram
     Svc->>OAIC: request n chat completions
     OAIC-->>Svc: chat responses
     Svc->>Svc: segment responses (sentences/discourse)
-    loop Each segment
+    loop each segment
         Svc->>Cache: lookup(text_hash, model, preproc)
         Cache-->>Svc: cached vector? (hit/miss)
         alt cache miss
@@ -775,7 +811,7 @@ sequenceDiagram
     Svc->>Svc: build ANN index (Annoy/HNSW/FAISS)
     Svc->>ANN: write index metadata + files
     Svc->>Svc: derive edges, threads, hulls, insights
-    Svc->>DB: persist responses, segments, embeddings, projections, clusters, metrics, edges, hulls, insights
+    Svc->>DB: persist artefacts
     Svc->>DB: mark run complete
 
     Store->>API: GET /run/{id}/results
@@ -788,10 +824,10 @@ sequenceDiagram
     API-->>Store: hydrate data
     Store-->>UI: render scene, overlays, legends
 
-    opt Follow-up fetches
+    opt follow-up fetches
         Store->>API: GET /run/{id}/metrics / graph / provenance / segment context
         API->>BE: forward requests
-        BE->>Svc: compute/lookup
+        BE->>Svc: compute or load
         Svc->>ANN: load index (if needed)
         Svc->>DB: read data
         DB-->>Svc: results
@@ -800,15 +836,17 @@ sequenceDiagram
         API-->>Store: update UI state
     end
 
-    User->>UI: Export selection / cluster
+    User->>UI: Export selection or cluster
     UI->>Store: triggerExport(scope, format)
     Store->>API: GET /run/{id}/export
     API->>BE: /run/{id}/export
     BE->>Svc: export_payload(...)
-    Svc->>DB: stream rows (+ provenance)
+    Svc->>DB: stream rows (plus provenance)
     Svc-->>BE: file stream
     BE-->>API: file stream
     API-->>Store: download ready
     Store-->>User: Save file
 ```
+
+
 

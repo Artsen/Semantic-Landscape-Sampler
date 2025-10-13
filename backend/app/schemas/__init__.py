@@ -36,10 +36,24 @@ from .run import (
     SegmentContextMetrics,
     SegmentContextResponse,
     QualityGauge,
+    ProjectionMode,
+    ProjectionVariantResponse,
     StageTiming,
     UMAPParams,
     UMAPParamsRequest,
     UsageInfo,
+)
+from .compare import (
+    CompareRunsRequest,
+    CompareRunsResponse,
+    ComparisonMode,
+    ComparisonMetrics,
+    ComparisonPoint,
+    ComparisonLink,
+    ComparisonTransformComponent,
+    ComparisonTransformSummary,
+    MovementHistogramBin,
+    TopTermShift,
 )
 
 __all__ = [
@@ -77,6 +91,18 @@ __all__ = [
     "UMAPParams",
     "UMAPParamsRequest",
     "QualityGauge",
+    "ProjectionMode",
+    "ProjectionVariantResponse",
     "StageTiming",
     "RunProvenanceResponse",
+    "CompareRunsRequest",
+    "CompareRunsResponse",
+    "ComparisonMode",
+    "ComparisonMetrics",
+    "ComparisonPoint",
+    "ComparisonLink",
+    "ComparisonTransformComponent",
+    "ComparisonTransformSummary",
+    "MovementHistogramBin",
+    "TopTermShift",
 ]

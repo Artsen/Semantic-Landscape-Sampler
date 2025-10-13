@@ -37,6 +37,8 @@ class Settings(BaseSettings):
     umap_default_min_dist: float = 0.3
     umap_default_metric: str = "cosine"
     umap_default_seed: int = 42
+    tsne_preview_threshold: int = 12000
+    tsne_preview_size: int = 10000
     default_env_label: str | None = None
     ann_index_dir: str = "./data/indexes"
     cluster_default_algo: str = "hdbscan"

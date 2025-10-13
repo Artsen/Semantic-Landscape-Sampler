@@ -81,6 +81,8 @@ from app.schemas import (
     RunSummary,
     UMAPParams,
     QualityGauge,
+    ProjectionMode,
+    ProjectionVariantResponse,
 )
 from app.services.pricing import get_completion_pricing, get_embedding_pricing
 from app.services.runs import RunService, load_run_with_details, list_recent_runs
@@ -159,6 +161,71 @@ async def get_run_provenance(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Provenance not found")
 
     return _provenance_record_to_response(record)
+
+
+@router.get("/{run_id}/projection", response_model=ProjectionVariantResponse)
+async def get_projection_variant_endpoint(
+    run_id: UUID,
+    method: str = Query("umap"),
+    mode: ProjectionMode = Query(ProjectionMode.BOTH),
+    params: str | None = None,
+    session: AsyncSession = Depends(get_session),
+) -> ProjectionVariantResponse:
+    overrides: dict[str, Any] = {}
+    if params:
+        try:
+            overrides = json.loads(params)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="params must be a JSON object",
+            ) from exc
+        if not isinstance(overrides, dict):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="params must be a JSON object",
+            )
+
+    service = RunService()
+    try:
+        payload, from_cache = await service.get_projection_variant(
+            session=session,
+            run_id=run_id,
+            method=method,
+            params=overrides,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        status_code_value = status.HTTP_404_NOT_FOUND if "not found" in message.lower() else status.HTTP_400_BAD_REQUEST
+        raise HTTPException(status_code=status_code_value, detail=message) from exc
+
+    include_2d = mode in {ProjectionMode.BOTH, ProjectionMode.D2}
+    include_3d = mode in {ProjectionMode.BOTH, ProjectionMode.D3}
+
+    coords_2d = payload.coords_2d.tolist() if include_2d else None
+    coords_3d = payload.coords_3d.tolist() if include_3d else None
+
+    return ProjectionVariantResponse(
+        run_id=run_id,
+        method=payload.method,
+        requested_params=payload.requested_params,
+        resolved_params=payload.resolved_params,
+        feature_version=payload.feature_version,
+        point_count=payload.point_count,
+        total_count=payload.total_count,
+        is_subsample=payload.is_subsample,
+        subsample_strategy=payload.subsample_strategy,
+        warnings=payload.warnings,
+        response_ids=payload.response_ids,
+        coords_2d=coords_2d,
+        coords_3d=coords_3d,
+        trustworthiness_2d=payload.trustworthiness_2d,
+        trustworthiness_3d=payload.trustworthiness_3d,
+        continuity_2d=payload.continuity_2d,
+        continuity_3d=payload.continuity_3d,
+        from_cache=from_cache,
+        cached_at=payload.cached_at,
+    )
 
 
 @router.get("/{run_id}/metrics", response_model=RunMetrics)
@@ -952,6 +1019,11 @@ def _build_results(
         continuity_2d=_finite(getattr(run, "continuity_2d", None)),
         continuity_3d=_finite(getattr(run, "continuity_3d", None)),
     )
+    projection_quality_map: dict[str, QualityGauge] | None = None
+    if any(value is not None for value in quality.model_dump().values()):
+        projection_quality_map = {"umap": quality}
+
+
 
     return RunResultsResponse(
         run=run_resource,
@@ -973,6 +1045,7 @@ def _build_results(
         costs=cost_summary,
         umap=umap_params,
         quality=quality,
+        projection_quality=projection_quality_map,
         provenance=_provenance_to_dict(provenance),
     )
 
@@ -1523,13 +1596,19 @@ def _provenance_to_dict(provenance: Any | None) -> dict[str, Any] | None:
             for key, value in vars(provenance).items()
             if not key.startswith("_")
         }
-    result: dict[str, Any] = {}
-    for key, value in data.items():
+
+    def _normalise(value: Any) -> Any:
         if isinstance(value, datetime):
-            result[key] = value.isoformat()
-        else:
-            result[key] = value
-    return result
+            return value.isoformat()
+        if isinstance(value, UUID):
+            return str(value)
+        if isinstance(value, dict):
+            return {k: _normalise(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple, set)):
+            return [_normalise(item) for item in value]
+        return value
+
+    return {key: _normalise(value) for key, value in data.items()}
 
 
 @router.get("/segments/{segment_id}/context", response_model=SegmentContextResponse)
